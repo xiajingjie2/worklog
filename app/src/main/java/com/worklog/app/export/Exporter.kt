@@ -20,8 +20,8 @@ object Exporter {
 
         DocxWriter.write(
             target = out,
-            title = "工作日志",
-            subtitle = "${day.format(titlePart)}    共 ${sorted.size} 条记录",
+            title = day.format(titlePart),
+            subtitle = "共 ${sorted.size} 条记录",
             entries = sorted
         )
 

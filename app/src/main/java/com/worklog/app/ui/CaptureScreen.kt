@@ -66,6 +66,7 @@ import com.worklog.app.data.Entry
 import com.worklog.app.data.EntryStore
 import com.worklog.app.util.Locator
 import com.worklog.app.util.Media
+import com.worklog.app.util.Watermark
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -292,7 +293,15 @@ fun CaptureScreen(
                             SimpleDateFormat("HH:mm", Locale.CHINA)
                                 .format(Date(current.time))
                         )
-                        current.place?.let { append("　").append(it) }
+                        val lat = current.lat
+                        val lng = current.lng
+                        val where = current.place?.takeIf { it.isNotBlank() }
+                            ?: if (lat != null && lng != null) {
+                                String.format(Locale.US, "%.5f, %.5f", lat, lng)
+                            } else {
+                                null
+                            }
+                        where?.let { append("　").append(it) }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -422,21 +431,42 @@ private suspend fun buildEntry(
     kind: String,
     thumb: File?
 ): Entry {
+    val time = System.currentTimeMillis()
     val location = Locator.current(ctx)
     val place = location?.let { Locator.placeName(ctx, it.latitude, it.longitude) }
+    val lat = location?.latitude
+    val lng = location?.longitude
+
+    // 照片底部压一条「时间 + 位置」水印；视频只记录不烧录
+    if (kind == "photo") {
+        Watermark.apply(file, stampText(time, place, lat, lng))
+    }
+
     val entry = Entry(
         id = UUID.randomUUID().toString(),
-        time = System.currentTimeMillis(),
+        time = time,
         kind = kind,
         path = file.absolutePath,
         thumb = thumb?.absolutePath,
         note = "",
-        lat = location?.latitude,
-        lng = location?.longitude,
+        lat = lat,
+        lng = lng,
         place = place
     )
     store.add(entry)
     return entry
+}
+
+/** 水印文字：时间 + 地名，没有地名就用坐标兜底 */
+private fun stampText(time: Long, place: String?, lat: Double?, lng: Double?): String {
+    val clock = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(time))
+    val where = place?.takeIf { it.isNotBlank() }
+        ?: if (lat != null && lng != null) {
+            String.format(Locale.US, "%.5f, %.5f", lat, lng)
+        } else {
+            null
+        }
+    return if (where != null) "$clock  $where" else clock
 }
 
 /** 本次进程内是否已经自动申请过定位权限，避免反复弹框 */

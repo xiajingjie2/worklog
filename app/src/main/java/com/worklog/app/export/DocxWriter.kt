@@ -26,7 +26,9 @@ import java.util.zip.ZipOutputStream
 object DocxWriter {
 
     private const val EMU_PER_INCH = 914400L
-    private const val CONTENT_WIDTH = 2_743_200L // 图片 3 英寸宽，约正文一半
+    private const val MAX_IMAGE_WIDTH_IN = 3.3   // 单条记录时图片最大宽度（英寸）
+    private const val USABLE_HEIGHT_IN = 9.2     // A4 去掉上下边距后的可用高度
+    private const val TEXT_HEIGHT_IN = 0.9       // 每条记录的文字大致占高
     private const val MAX_IMAGE_WIDTH = 1600
 
     private class Part(
@@ -39,6 +41,7 @@ object DocxWriter {
     fun write(target: File, title: String, subtitle: String, entries: List<Entry>) {
         val parts = mutableListOf<Part>()
         val body = StringBuilder()
+        val total = entries.size.coerceAtLeast(1)
 
         body.append(paragraph(title, size = 40, bold = true, align = "center", color = "1F2937"))
         if (subtitle.isNotBlank()) {
@@ -57,7 +60,7 @@ object DocxWriter {
                 )
             )
             if (entry.note.isNotBlank()) {
-                body.append(paragraph(entry.note, size = 21, color = "374151"))
+                body.append(paragraph(entry.note, size = 21, color = "374151", firstLineIndent = true))
             }
 
             val source = imageSource(entry)
@@ -65,8 +68,9 @@ object DocxWriter {
             if (part != null) {
                 parts.add(part)
                 val rid = "rId${100 + parts.size}"
-                val cy = (CONTENT_WIDTH.toDouble() * part.height / part.width).toLong()
-                body.append(imageParagraph(rid, CONTENT_WIDTH, cy, parts.size))
+                val cx = imageWidthEmu(part, total)
+                val cy = (cx.toDouble() * part.height / part.width).toLong()
+                body.append(imageParagraph(rid, cx, cy, parts.size))
                 if (entry.isVideo) {
                     body.append(
                         paragraph("（视频记录的封面帧）", size = 18, color = "9CA3AF", align = "center")
@@ -114,6 +118,18 @@ object DocxWriter {
         return if (file.exists() && file.length() > 0) file else null
     }
 
+    /**
+     * 按当天记录条数动态计算图片宽度（EMU）：
+     * 条数越多图片越小，让 2~3 条记录尽量排进同一页，同时保证图片不打到页外。
+     */
+    private fun imageWidthEmu(part: Part, total: Int): Long {
+        val count = total.coerceAtLeast(1)
+        val budget = ((USABLE_HEIGHT_IN - TEXT_HEIGHT_IN * count) / count).coerceAtLeast(1.4)
+        val byHeight = budget * EMU_PER_INCH * part.width / part.height
+        val maxCx = MAX_IMAGE_WIDTH_IN * EMU_PER_INCH
+        return minOf(maxCx, byHeight).toLong()
+    }
+
     // ---------------------------------------------------------------- 段落
 
     private fun paragraph(
@@ -122,11 +138,15 @@ object DocxWriter {
         bold: Boolean = false,
         align: String? = null,
         color: String? = null,
-        spaceBefore: Int = 80
+        spaceBefore: Int = 80,
+        firstLineIndent: Boolean = false
     ): String {
         val pPr = StringBuilder("<w:pPr>")
-        // 注意：OOXML 的 pPr 子元素有顺序要求，spacing 必须在 jc 之前
+        // 注意：OOXML 的 pPr 子元素有顺序要求：spacing → ind → jc
         pPr.append("<w:spacing w:before=\"$spaceBefore\" w:after=\"80\" w:line=\"340\" w:lineRule=\"auto\"/>")
+        if (firstLineIndent) {
+            pPr.append("<w:ind w:firstLine=\"420\" w:firstLineChars=\"200\"/>")
+        }
         if (align != null) pPr.append("<w:jc w:val=\"$align\"/>")
         pPr.append("</w:pPr>")
 
