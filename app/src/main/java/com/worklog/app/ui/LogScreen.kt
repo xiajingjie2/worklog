@@ -244,7 +244,7 @@ private fun Thumb(path: String, size: Dp) {
     val img = bitmap
     if (img != null) {
         Image(
-            image = img,
+            bitmap = img,
             contentDescription = null,
             modifier = Modifier.size(size).clip(RoundedCornerShape(10.dp)),
             contentScale = ContentScale.Crop
