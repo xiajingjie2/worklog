@@ -44,6 +44,13 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
+      - name: Rename APK
+        run: |
+          VER=$(sed -n 's/^val appVersionName = "\(.*\)"/\1/p' app/build.gradle.kts | head -n 1)
+          cd app/build/outputs/apk/debug
+          mv app-debug.apk "牛马APP-V${VER}.apk"
+          ls -l
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
