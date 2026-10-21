@@ -5,6 +5,8 @@ import android.app.TimePickerDialog
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.OutlinedTextField
 import java.io.FileOutputStream
@@ -105,6 +107,13 @@ fun LogScreen(
     var editNote by remember { mutableStateOf("") }
     var editTime by remember { mutableStateOf(0L) }
     var editPaths by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showCalendar by remember { mutableStateOf(false) }
+
+    val markedDays = remember(entries) {
+        entries.map {
+            Instant.ofEpochMilli(it.time).atZone(ZoneId.systemDefault()).toLocalDate()
+        }.toSet()
+    }
 
     val editPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(2)
@@ -151,7 +160,10 @@ fun LogScreen(
             }
             Text(
                 text = day.format(DateTimeFormatter.ofPattern("M 月 d 日 EEEE", Locale.CHINA)),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { showCalendar = true }
+                    .padding(vertical = 8.dp),
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.titleMedium
             )
@@ -230,6 +242,18 @@ fun LogScreen(
                 Text(if (exporting) "正在生成…" else "导出 Word")
             }
         }
+    }
+
+    if (showCalendar) {
+        MonthCalendarDialog(
+            initial = day,
+            marked = markedDays,
+            onPick = { picked ->
+                day = picked
+                showCalendar = false
+            },
+            onDismiss = { showCalendar = false }
+        )
     }
 
     val editingEntry = editing
@@ -341,7 +365,7 @@ fun LogScreen(
             text = {
                 Column {
                     listOf(
-                        AppSettings.MODE_LOG to "工作日志摘要",
+                        AppSettings.MODE_LOG to "日志",
                         AppSettings.MODE_BRIEF to "简报"
                     ).forEach { (value, label) ->
                         Row(
@@ -462,6 +486,115 @@ private fun Thumb(path: String, size: Dp) {
                 .background(MaterialTheme.colorScheme.surfaceVariant)
         )
     }
+}
+
+/** 月历：有记录的日期打点标记，点选即可跳转 */
+@Composable
+private fun MonthCalendarDialog(
+    initial: LocalDate,
+    marked: Set<LocalDate>,
+    onPick: (LocalDate) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var month by remember { mutableStateOf(initial.withDayOfMonth(1)) }
+    val titleFormat = remember { DateTimeFormatter.ofPattern("yyyy 年 M 月", Locale.CHINA) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { month = month.minusMonths(1) }) {
+                    Icon(Icons.Filled.ChevronLeft, contentDescription = "上个月")
+                }
+                Text(
+                    month.format(titleFormat),
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                IconButton(onClick = { month = month.plusMonths(1) }) {
+                    Icon(Icons.Filled.ChevronRight, contentDescription = "下个月")
+                }
+            }
+        },
+        text = {
+            Column {
+                Row(Modifier.fillMaxWidth()) {
+                    listOf("一", "二", "三", "四", "五", "六", "日").forEach { label ->
+                        Text(
+                            label,
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+
+                val offset = month.withDayOfMonth(1).dayOfWeek.value - 1
+                val days = month.lengthOfMonth()
+                val rows = (offset + days + 6) / 7
+                for (row in 0 until rows) {
+                    Row(Modifier.fillMaxWidth()) {
+                        for (col in 0 until 7) {
+                            val dayNum = row * 7 + col - offset + 1
+                            if (dayNum in 1..days) {
+                                val date = month.withDayOfMonth(dayNum)
+                                val isMarked = marked.contains(date)
+                                val isSelected = date == initial
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(2.dp)
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primary
+                                            else Color.Transparent
+                                        )
+                                        .clickable { onPick(date) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            dayNum.toString(),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (isSelected) {
+                                                MaterialTheme.colorScheme.onPrimary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            }
+                                        )
+                                        if (isMarked) {
+                                            Spacer(Modifier.height(2.dp))
+                                            Box(
+                                                Modifier
+                                                    .size(4.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        if (isSelected) {
+                                                            MaterialTheme.colorScheme.onPrimary
+                                                        } else {
+                                                            MaterialTheme.colorScheme.primary
+                                                        }
+                                                    )
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
 }
 
 /** 依次弹出日期、时间选择框 */

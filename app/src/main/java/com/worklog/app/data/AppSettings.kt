@@ -24,7 +24,7 @@ class AppSettings(ctx: Context) {
 
         fun label(mode: String): String = when (mode) {
             MODE_BRIEF -> "简报"
-            else -> "工作日志摘要"
+            else -> "日志"
         }
     }
 }
