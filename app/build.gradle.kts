@@ -4,6 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// 版本号只改这里：APK 文件名和版本信息都会跟着变
+val appVersionName = "1.4"
+
 android {
     namespace = "com.worklog.app"
     compileSdk = 35
@@ -12,8 +15,8 @@ android {
         applicationId = "com.worklog.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 14
+        versionName = appVersionName
     }
 
     buildTypes {
@@ -42,6 +45,14 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("牛马APP-V$appVersionName.apk")
         }
     }
 }
