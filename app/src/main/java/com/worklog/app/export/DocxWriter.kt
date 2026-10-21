@@ -26,10 +26,12 @@ import java.util.zip.ZipOutputStream
 object DocxWriter {
 
     private const val EMU_PER_INCH = 914400L
-    private const val MAX_IMAGE_WIDTH_IN = 3.3   // 单条记录时图片最大宽度（英寸）
-    private const val USABLE_HEIGHT_IN = 8.8     // A4 去掉上下边距后的可用高度
-    private const val TEXT_HEIGHT_IN = 1.1       // 每条记录的文字大致占高
+    private const val CONTENT_WIDTH_IN = 5.9      // A4 去掉左右边距后的正文宽度
+    private const val USABLE_HEIGHT_IN = 8.8       // A4 去掉上下边距后的可用高度
+    private const val PAGE_FILL = 0.75             // 超过 75% 就另起一页
     private const val MAX_IMAGE_WIDTH = 1600
+    private const val CHAR_PER_LINE = 40           // 10.5pt 宋体，5.9 英寸约 40 字
+    private const val LINE_HEIGHT_IN = 0.26
 
     /** Word 里的字体组合：西文名 + 中文字体名 */
     private class Font(val ascii: String, val eastAsia: String)
@@ -45,10 +47,12 @@ object DocxWriter {
         val height: Int
     )
 
+    // ---------------------------------------------------------------- 日志模式
+
     fun write(target: File, title: String, subtitle: String, entries: List<Entry>) {
         val parts = mutableListOf<Part>()
         val body = StringBuilder()
-        val total = entries.size.coerceAtLeast(1)
+        val sorted = entries.sortedBy { it.time }
 
         body.append(paragraph(title, size = 40, bold = true, align = "center", color = "1F2937"))
         if (subtitle.isNotBlank()) {
@@ -56,7 +60,25 @@ object DocxWriter {
         }
         body.append(paragraph("", size = 18))
 
-        entries.sortedBy { it.time }.forEachIndexed { index, entry ->
+        var used = 1.9 // 标题区已占的高度
+
+        sorted.forEachIndexed { index, entry ->
+            val text = entry.note.trim()
+            val (first, second) = splitNote(text)
+            val entryParts = mutableListOf<Part>()
+            imageSources(entry).forEach { file ->
+                prepareImage(file, parts.size + entryParts.size + 1)?.let { entryParts.add(it) }
+            }
+
+            val estimated = 0.30 + estimateText(first) + estimateText(second) +
+                estimateImage(entryParts) + 0.12
+
+            // 占到页面的 75% 就另起一页，避免一条记录被劈开
+            if (index > 0 && used + estimated > USABLE_HEIGHT_IN * PAGE_FILL) {
+                body.append(pageBreak())
+                used = 0.0
+            }
+
             body.append(
                 paragraph(
                     heading(entry, index + 1),
@@ -66,18 +88,14 @@ object DocxWriter {
                     spaceBefore = 160
                 )
             )
-            if (entry.note.isNotBlank()) {
-                body.append(paragraph(entry.note, size = 21, color = "374151", firstLineIndent = true))
+            if (first.isNotBlank()) {
+                body.append(paragraph(first, size = 21, color = "374151", firstLineIndent = true))
             }
 
-            val source = imageSource(entry)
-            val part = source?.let { prepareImage(it, parts.size + 1) }
-            if (part != null) {
-                parts.add(part)
-                val rid = "rId${100 + parts.size}"
-                val cx = imageWidthEmu(part, total)
-                val cy = (cx.toDouble() * part.height / part.width).toLong()
-                body.append(imageParagraph(rid, cx, cy, parts.size))
+            if (entryParts.isNotEmpty()) {
+                val start = parts.size
+                parts.addAll(entryParts)
+                body.append(imagesParagraph(start, entryParts, total = sorted.size))
                 if (entry.isVideo) {
                     body.append(
                         paragraph("（视频记录的封面帧）", size = 18, color = "9CA3AF", align = "center")
@@ -86,21 +104,24 @@ object DocxWriter {
             } else if (entry.isVideo) {
                 body.append(paragraph("（视频记录）", size = 18, color = "9CA3AF"))
             }
+
+            // 文字较多时，把后半段放到图片下面
+            if (second.isNotBlank()) {
+                body.append(paragraph(second, size = 21, color = "374151", firstLineIndent = true))
+            }
+
             body.append(paragraph("", size = 14))
+            used += estimated
         }
 
-        if (entries.isEmpty()) {
+        if (sorted.isEmpty()) {
             body.append(paragraph("（本日没有记录）", size = 22, align = "center", color = "9CA3AF"))
         }
 
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(target))).use { zip ->
-            put(zip, "[Content_Types].xml", contentTypes().toByteArray(Charsets.UTF_8))
-            put(zip, "_rels/.rels", rootRels().toByteArray(Charsets.UTF_8))
-            put(zip, "word/document.xml", documentXml(body.toString()).toByteArray(Charsets.UTF_8))
-            put(zip, "word/_rels/document.xml.rels", documentRels(parts).toByteArray(Charsets.UTF_8))
-            parts.forEach { put(zip, "word/${it.name}", it.bytes) }
-        }
+        zip(target, parts, body)
     }
+
+    // ---------------------------------------------------------------- 简报模式
 
     /**
      * 简报模式：抬头「简报」（宋体），日期右对齐，正文仿宋_GB2312，首行缩进两字。
@@ -109,7 +130,6 @@ object DocxWriter {
         val parts = mutableListOf<Part>()
         val body = StringBuilder()
         val sorted = entries.sortedBy { it.time }
-        val total = sorted.size.coerceAtLeast(1)
 
         body.append(
             paragraph(
@@ -136,7 +156,7 @@ object DocxWriter {
 
         sorted.forEach { entry ->
             val time = SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(entry.time))
-            val where = briefPlace(entry)
+            val where = placeText(entry)
             val head = if (where.isBlank()) time else "$time　$where"
             body.append(
                 paragraph(
@@ -159,28 +179,28 @@ object DocxWriter {
                     )
                 )
             }
-            val source = imageSource(entry)
-            val part = source?.let { prepareImage(it, parts.size + 1) }
-            if (part != null) {
-                parts.add(part)
-                val rid = "rId${100 + parts.size}"
-                val cx = briefImageWidth(part, total)
-                val cy = (cx.toDouble() * part.height / part.width).toLong()
-                body.append(imageParagraph(rid, cx, cy, parts.size))
+
+            val entryParts = mutableListOf<Part>()
+            imageSources(entry).forEach { file ->
+                prepareImage(file, parts.size + entryParts.size + 1)?.let { entryParts.add(it) }
+            }
+            if (entryParts.isNotEmpty()) {
+                val start = parts.size
+                parts.addAll(entryParts)
+                body.append(imagesParagraph(start, entryParts, total = sorted.size, brief = true))
             }
         }
 
         if (sorted.isEmpty()) {
             body.append(
-                paragraph(
-                    "（本日没有记录）",
-                    size = 21,
-                    align = "center",
-                    font = FONT_FANGSONG
-                )
+                paragraph("（本日没有记录）", size = 21, align = "center", font = FONT_FANGSONG)
             )
         }
 
+        zip(target, parts, body)
+    }
+
+    private fun zip(target: File, parts: List<Part>, body: StringBuilder) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(target))).use { zip ->
             put(zip, "[Content_Types].xml", contentTypes().toByteArray(Charsets.UTF_8))
             put(zip, "_rels/.rels", rootRels().toByteArray(Charsets.UTF_8))
@@ -190,7 +210,64 @@ object DocxWriter {
         }
     }
 
-    private fun briefPlace(entry: Entry): String {
+    // ---------------------------------------------------------------- 文本切分
+
+    /**
+     * 一条记录最多两张图。文字太长时按句子断成两段：
+     * 前半段放图片上面，后半段放图片下面。
+     */
+    private fun splitNote(text: String): Pair<String, String> {
+        if (text.length <= 60) return text to ""
+        val target = (text.length * 0.45).toInt()
+        var cut = -1
+        for (i in target until text.length) {
+            if (text[i] in "。！？；\n") {
+                cut = i + 1
+                break
+            }
+        }
+        if (cut <= 0) {
+            for (i in target downTo 1) {
+                if (text[i] in "，、,;") {
+                    cut = i + 1
+                    break
+                }
+            }
+        }
+        if (cut <= 0) cut = target
+        if (cut >= text.length) return text to ""
+        return text.substring(0, cut).trim() to text.substring(cut).trim()
+    }
+
+    private fun estimateText(text: String): Double {
+        if (text.isBlank()) return 0.0
+        val lines = (text.length + CHAR_PER_LINE - 1) / CHAR_PER_LINE
+        return lines * LINE_HEIGHT_IN + 0.08
+    }
+
+    private fun estimateImage(parts: List<Part>): Double {
+        if (parts.isEmpty()) return 0.0
+        val gap = if (parts.size >= 2) 0.30 else 0.0
+        val capWidth = if (parts.size >= 2) (CONTENT_WIDTH_IN - gap) / 2 else 3.3
+        val maxHeight = 3.4
+        return parts.maxOf { p ->
+            val byWidth = capWidth
+            val byHeight = maxHeight * p.width / p.height
+            val w = minOf(byWidth, byHeight)
+            w * p.height / p.width
+        }
+    }
+
+    // ---------------------------------------------------------------- 内容
+
+    private fun heading(entry: Entry, index: Int): String {
+        val time = SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(entry.time))
+        val place = placeText(entry).takeIf { it.isNotBlank() }
+        val prefix = "%02d.".format(Locale.CHINA, index)
+        return if (place != null) "$prefix  $time　$place" else "$prefix  $time"
+    }
+
+    private fun placeText(entry: Entry): String {
         entry.place?.takeIf { it.isNotBlank() }?.let { return it }
         val lat = entry.lat
         val lng = entry.lng
@@ -201,47 +278,13 @@ object DocxWriter {
         }
     }
 
-    private fun briefImageWidth(part: Part, total: Int): Long {
-        val count = total.coerceAtLeast(1)
-        val budget = ((USABLE_HEIGHT_IN - TEXT_HEIGHT_IN * count) / count).coerceAtLeast(1.2)
-        val byHeight = budget * EMU_PER_INCH * part.width / part.height
-        val maxCx = 2.4 * EMU_PER_INCH
-        return minOf(maxCx, byHeight).toLong()
-    }
-
-    // ---------------------------------------------------------------- 内容
-
-    private fun heading(entry: Entry, index: Int): String {
-        val time = SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(entry.time))
-        val lat = entry.lat
-        val lng = entry.lng
-        val place = entry.place?.takeIf { it.isNotBlank() }
-            ?: if (lat != null && lng != null) {
-                String.format(Locale.US, "%.5f, %.5f", lat, lng)
-            } else {
-                null
-            }
-        val prefix = "%02d.".format(Locale.CHINA, index)
-        return if (place != null) "$prefix  $time　$place" else "$prefix  $time"
-    }
-
-    private fun imageSource(entry: Entry): File? {
-        val candidate = if (entry.isVideo) entry.thumb else entry.path
-        if (candidate.isNullOrBlank()) return null
-        val file = File(candidate)
-        return if (file.exists() && file.length() > 0) file else null
-    }
-
-    /**
-     * 按当天记录条数动态计算图片宽度（EMU）：
-     * 条数越多图片越小，让 2~3 条记录尽量排进同一页，同时保证图片不打到页外。
-     */
-    private fun imageWidthEmu(part: Part, total: Int): Long {
-        val count = total.coerceAtLeast(1)
-        val budget = ((USABLE_HEIGHT_IN - TEXT_HEIGHT_IN * count) / count).coerceAtLeast(1.4)
-        val byHeight = budget * EMU_PER_INCH * part.width / part.height
-        val maxCx = MAX_IMAGE_WIDTH_IN * EMU_PER_INCH
-        return minOf(maxCx, byHeight).toLong()
+    private fun imageSources(entry: Entry): List<File> {
+        val candidates = if (entry.isVideo) {
+            listOfNotNull(entry.thumb)
+        } else {
+            entry.paths.take(2)
+        }
+        return candidates.map { File(it) }.filter { it.exists() && it.length() > 0 }
     }
 
     // ---------------------------------------------------------------- 段落
@@ -278,23 +321,67 @@ object DocxWriter {
         return "<w:p>$pPr<w:r>$rPr<w:t xml:space=\"preserve\">$safe</w:t></w:r></w:p>"
     }
 
-    private fun imageParagraph(rid: String, cx: Long, cy: Long, id: Int): String = buildString {
-        append("<w:p><w:pPr>")
-        append("<w:spacing w:before=\"60\" w:after=\"60\"/>")
-        append("<w:jc w:val=\"center\"/></w:pPr>")
+    /**
+     * 图片段落：一张就居中放大；两张（最多两张）就横向排列，
+     * 中间用两个全角空格隔开（约 1.5 个中文字符宽）。
+     */
+    private fun imagesParagraph(
+        startIndex: Int,
+        parts: List<Part>,
+        total: Int,
+        brief: Boolean = false
+    ): String {
+        if (parts.isEmpty()) return ""
+        val count = parts.size
+        val gapEmu = if (count >= 2) (0.30 * EMU_PER_INCH).toLong() else 0L
+        val contentEmu = (CONTENT_WIDTH_IN * EMU_PER_INCH).toLong()
+
+        // 单张时的最大宽度：条数越多越小；简报模式更小
+        val singleCapIn = when {
+            brief -> 2.4
+            total >= 3 -> 2.6
+            total == 2 -> 2.8
+            else -> 3.3
+        }
+        val eachCap = if (count >= 2) {
+            (contentEmu - gapEmu) / 2
+        } else {
+            (singleCapIn * EMU_PER_INCH).toLong()
+        }
+        val maxHeightIn = if (count >= 2) 3.0 else 3.6
+
+        val runs = StringBuilder()
+        parts.forEachIndexed { i, part ->
+            val rid = 100 + startIndex + i + 1
+            val byHeight = (maxHeightIn * EMU_PER_INCH * part.width / part.height).toLong()
+            val cx = minOf(eachCap, byHeight)
+            val cy = (cx.toDouble() * part.height / part.width).toLong()
+            if (i > 0) runs.append(gapRun())
+            runs.append(drawingRun(rid, cx, cy))
+        }
+
+        return "<w:p><w:pPr><w:spacing w:before=\"60\" w:after=\"60\"/>" +
+            "<w:jc w:val=\"center\"/></w:pPr>$runs</w:p>"
+    }
+
+    private fun gapRun(): String =
+        "<w:r><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:eastAsia=\"Microsoft YaHei\"/>" +
+            "<w:sz w:val=\"21\"/></w:rPr><w:t xml:space=\"preserve\">　　</w:t></w:r>"
+
+    private fun drawingRun(rid: Int, cx: Long, cy: Long): String = buildString {
         append("<w:r><w:drawing>")
         append("<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">")
         append("<wp:extent cx=\"$cx\" cy=\"$cy\"/>")
-        append("<wp:docPr id=\"$id\" name=\"Picture $id\"/>")
+        append("<wp:docPr id=\"$rid\" name=\"Picture $rid\"/>")
         append("<a:graphic>")
         append("<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">")
         append("<pic:pic>")
         append("<pic:nvPicPr>")
-        append("<pic:cNvPr id=\"$id\" name=\"image$id.jpg\"/>")
+        append("<pic:cNvPr id=\"$rid\" name=\"image$rid.jpg\"/>")
         append("<pic:cNvPicPr/>")
         append("</pic:nvPicPr>")
         append("<pic:blipFill>")
-        append("<a:blip r:embed=\"$rid\"/>")
+        append("<a:blip r:embed=\"rId$rid\"/>")
         append("<a:stretch><a:fillRect/></a:stretch>")
         append("</pic:blipFill>")
         append("<pic:spPr>")
@@ -305,8 +392,11 @@ object DocxWriter {
         append("</a:graphicData>")
         append("</a:graphic>")
         append("</wp:inline>")
-        append("</w:drawing></w:r></w:p>")
+        append("</w:drawing></w:r>")
     }
+
+    private fun pageBreak(): String =
+        "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>"
 
     // ---------------------------------------------------------------- 图片
 

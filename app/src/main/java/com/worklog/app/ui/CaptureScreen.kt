@@ -13,6 +13,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -139,39 +140,13 @@ fun CaptureScreen(
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
+        ActivityResultContracts.PickMultipleVisualMedia(2)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
             busy = true
             scope.launch {
                 val entry = withContext(Dispatchers.IO) {
-                    val dest = File(store.mediaDir(), "PIC_${System.currentTimeMillis()}.jpg")
-                    val copied = runCatching {
-                        ctx.contentResolver.openInputStream(uri)?.use { ins ->
-                            FileOutputStream(dest).use { out -> ins.copyTo(out) }
-                        }
-                    }.getOrNull()
-                    if (copied == null || !dest.exists() || dest.length() == 0L) {
-                        null
-                    } else {
-                        val location = Locator.current(ctx)
-                        val place = location?.let {
-                            Locator.placeName(ctx, it.latitude, it.longitude)
-                        }
-                        val item = Entry(
-                            id = UUID.randomUUID().toString(),
-                            time = System.currentTimeMillis(),
-                            kind = "photo",
-                            path = dest.absolutePath,
-                            thumb = null,
-                            note = "",
-                            lat = location?.latitude,
-                            lng = location?.longitude,
-                            place = place
-                        )
-                        store.add(item)
-                        item
-                    }
+                    importPicked(ctx, store, uris.take(2))
                 }
                 busy = false
                 if (entry != null) {
@@ -536,11 +511,42 @@ private suspend fun buildEntry(
         id = UUID.randomUUID().toString(),
         time = time,
         kind = kind,
-        path = file.absolutePath,
+        paths = listOf(file.absolutePath),
         thumb = thumb?.absolutePath,
         note = "",
         lat = lat,
         lng = lng,
+        place = place
+    )
+    store.add(entry)
+    return entry
+}
+
+/** 把相册选的图片（最多两张）复制进来，生成一条记录 */
+private suspend fun importPicked(ctx: Context, store: EntryStore, uris: List<Uri>): Entry? {
+    val dests = mutableListOf<File>()
+    uris.forEachIndexed { index, uri ->
+        val dest = File(store.mediaDir(), "PIC_${System.currentTimeMillis()}_$index.jpg")
+        val ok = runCatching {
+            ctx.contentResolver.openInputStream(uri)?.use { ins ->
+                FileOutputStream(dest).use { out -> ins.copyTo(out) }
+            }
+        }.getOrNull()
+        if (ok != null && dest.exists() && dest.length() > 0L) dests.add(dest)
+    }
+    if (dests.isEmpty()) return null
+
+    val location = Locator.current(ctx)
+    val place = location?.let { Locator.placeName(ctx, it.latitude, it.longitude) }
+    val entry = Entry(
+        id = UUID.randomUUID().toString(),
+        time = System.currentTimeMillis(),
+        kind = "photo",
+        paths = dests.map { it.absolutePath },
+        thumb = null,
+        note = "",
+        lat = location?.latitude,
+        lng = location?.longitude,
         place = place
     )
     store.add(entry)

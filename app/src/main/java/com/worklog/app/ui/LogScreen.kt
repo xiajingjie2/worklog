@@ -1,5 +1,15 @@
 package com.worklog.app.ui
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.OutlinedTextField
+import java.io.FileOutputStream
+import java.util.Calendar
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -91,6 +101,35 @@ fun LogScreen(
     var showModeDialog by remember { mutableStateOf(false) }
     var exportedUri by remember { mutableStateOf<Uri?>(null) }
 
+    var editing by remember { mutableStateOf<Entry?>(null) }
+    var editNote by remember { mutableStateOf("") }
+    var editTime by remember { mutableStateOf(0L) }
+    var editPaths by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    val editPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(2)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            scope.launch {
+                val added = withContext(Dispatchers.IO) {
+                    val out = mutableListOf<String>()
+                    val dir = File(ctx.filesDir, "media").apply { if (!exists()) mkdirs() }
+                    uris.take(2).forEachIndexed { i, uri ->
+                        val dest = File(dir, "IMG_${System.currentTimeMillis()}_$i.jpg")
+                        val ok = runCatching {
+                            ctx.contentResolver.openInputStream(uri)?.use { ins ->
+                                FileOutputStream(dest).use { o -> ins.copyTo(o) }
+                            }
+                        }.getOrNull()
+                        if (ok != null && dest.length() > 0L) out.add(dest.absolutePath)
+                    }
+                    out
+                }
+                editPaths = (editPaths + added).distinct().take(2)
+            }
+        }
+    }
+
     val dayEntries = remember(entries, day) {
         entries
             .filter {
@@ -140,7 +179,16 @@ fun LogScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(dayEntries, key = { it.id }) { entry ->
-                    EntryRow(entry = entry, onDelete = { pendingDelete = entry })
+                    EntryRow(
+                        entry = entry,
+                        onOpen = {
+                            editing = entry
+                            editNote = entry.note
+                            editTime = entry.time
+                            editPaths = entry.paths
+                        },
+                        onDelete = { pendingDelete = entry }
+                    )
                 }
             }
         }
@@ -182,6 +230,87 @@ fun LogScreen(
                 Text(if (exporting) "正在生成…" else "导出 Word")
             }
         }
+    }
+
+    val editingEntry = editing
+    if (editingEntry != null) {
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text("修改记录") },
+            text = {
+                Column {
+                    TextButton(onClick = { pickDateTime(ctx, editTime) { editTime = it } }) {
+                        Text(
+                            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA)
+                                .format(Date(editTime))
+                        )
+                    }
+                    OutlinedTextField(
+                        value = editNote,
+                        onValueChange = { editNote = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3,
+                        placeholder = { Text("备注") }
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        editPaths.forEach { path ->
+                            Box {
+                                Thumb(path = path, size = 64.dp)
+                                IconButton(
+                                    onClick = { editPaths = editPaths - path },
+                                    modifier = Modifier.align(Alignment.TopEnd).size(24.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "移除图片",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        if (editPaths.size < 2) {
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        editPicker.launch(
+                                            PickVisualMediaRequest(
+                                                ActivityResultContracts.PickVisualMedia.ImageOnly
+                                            )
+                                        )
+                                    }
+                                }
+                            ) {
+                                Text("+ 图片")
+                            }
+                        }
+                    }
+                    Text(
+                        "每条记录最多两张图片",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val updated = editingEntry.copy(
+                        time = editTime,
+                        note = editNote.trim(),
+                        paths = editPaths
+                    )
+                    editing = null
+                    scope.launch {
+                        withContext(Dispatchers.IO) { store.update(updated) }
+                        onChanged(entries.map { if (it.id == updated.id) updated else it })
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editing = null }) { Text("取消") }
+            }
+        )
     }
 
     val shared = exportedUri
@@ -250,7 +379,7 @@ fun LogScreen(
                     pendingDelete = null
                     scope.launch {
                         withContext(Dispatchers.IO) {
-                            runCatching { File(target.path).delete() }
+                            target.paths.forEach { runCatching { File(it).delete() } }
                             target.thumb?.let { runCatching { File(it).delete() } }
                             store.remove(target.id)
                         }
@@ -266,8 +395,8 @@ fun LogScreen(
 }
 
 @Composable
-private fun EntryRow(entry: Entry, onDelete: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun EntryRow(entry: Entry, onOpen: () -> Unit, onDelete: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().clickable { onOpen() }) {
         Row(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -333,6 +462,34 @@ private fun Thumb(path: String, size: Dp) {
                 .background(MaterialTheme.colorScheme.surfaceVariant)
         )
     }
+}
+
+/** 依次弹出日期、时间选择框 */
+private fun pickDateTime(ctx: Context, initial: Long, onPicked: (Long) -> Unit) {
+    val cal = Calendar.getInstance().apply { timeInMillis = initial }
+    DatePickerDialog(
+        ctx,
+        { _, year, month, dayOfMonth ->
+            cal.set(Calendar.YEAR, year)
+            cal.set(Calendar.MONTH, month)
+            cal.set(Calendar.DAY_OF_MONTH, dayOfMonth)
+            TimePickerDialog(
+                ctx,
+                { _, hour, minute ->
+                    cal.set(Calendar.HOUR_OF_DAY, hour)
+                    cal.set(Calendar.MINUTE, minute)
+                    cal.set(Calendar.SECOND, 0)
+                    onPicked(cal.timeInMillis)
+                },
+                cal.get(Calendar.HOUR_OF_DAY),
+                cal.get(Calendar.MINUTE),
+                true
+            ).show()
+        },
+        cal.get(Calendar.YEAR),
+        cal.get(Calendar.MONTH),
+        cal.get(Calendar.DAY_OF_MONTH)
+    ).show()
 }
 
 private fun shareDocx(ctx: Context, uri: Uri) {
