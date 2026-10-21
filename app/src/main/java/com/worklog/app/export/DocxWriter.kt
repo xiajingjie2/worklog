@@ -27,9 +27,16 @@ object DocxWriter {
 
     private const val EMU_PER_INCH = 914400L
     private const val MAX_IMAGE_WIDTH_IN = 3.3   // 单条记录时图片最大宽度（英寸）
-    private const val USABLE_HEIGHT_IN = 9.2     // A4 去掉上下边距后的可用高度
-    private const val TEXT_HEIGHT_IN = 0.9       // 每条记录的文字大致占高
+    private const val USABLE_HEIGHT_IN = 8.8     // A4 去掉上下边距后的可用高度
+    private const val TEXT_HEIGHT_IN = 1.1       // 每条记录的文字大致占高
     private const val MAX_IMAGE_WIDTH = 1600
+
+    /** Word 里的字体组合：西文名 + 中文字体名 */
+    private class Font(val ascii: String, val eastAsia: String)
+
+    private val FONT_YAHEI = Font("Calibri", "Microsoft YaHei")
+    private val FONT_SONG = Font("SimSun", "宋体")
+    private val FONT_FANGSONG = Font("FangSong_GB2312", "仿宋_GB2312")
 
     private class Part(
         val name: String,     // 例如 media/image1.jpg
@@ -56,7 +63,7 @@ object DocxWriter {
                     size = 22,
                     bold = true,
                     color = "111827",
-                    spaceBefore = 240
+                    spaceBefore = 160
                 )
             )
             if (entry.note.isNotBlank()) {
@@ -93,6 +100,113 @@ object DocxWriter {
             put(zip, "word/_rels/document.xml.rels", documentRels(parts).toByteArray(Charsets.UTF_8))
             parts.forEach { put(zip, "word/${it.name}", it.bytes) }
         }
+    }
+
+    /**
+     * 简报模式：抬头「简报」（宋体），日期右对齐，正文仿宋_GB2312，首行缩进两字。
+     */
+    fun writeBrief(target: File, day: String, entries: List<Entry>) {
+        val parts = mutableListOf<Part>()
+        val body = StringBuilder()
+        val sorted = entries.sortedBy { it.time }
+        val total = sorted.size.coerceAtLeast(1)
+
+        body.append(
+            paragraph(
+                "简  报",
+                size = 44,
+                bold = true,
+                align = "center",
+                color = "000000",
+                font = FONT_SONG,
+                spaceBefore = 0
+            )
+        )
+        body.append(
+            paragraph(
+                day,
+                size = 21,
+                align = "right",
+                color = "000000",
+                font = FONT_FANGSONG,
+                spaceBefore = 60
+            )
+        )
+        body.append(paragraph("", size = 12, spaceBefore = 0))
+
+        sorted.forEach { entry ->
+            val time = SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(entry.time))
+            val where = briefPlace(entry)
+            val head = if (where.isBlank()) time else "$time　$where"
+            body.append(
+                paragraph(
+                    head,
+                    size = 21,
+                    bold = true,
+                    color = "000000",
+                    font = FONT_FANGSONG,
+                    spaceBefore = 160
+                )
+            )
+            if (entry.note.isNotBlank()) {
+                body.append(
+                    paragraph(
+                        entry.note,
+                        size = 21,
+                        color = "000000",
+                        firstLineIndent = true,
+                        font = FONT_FANGSONG
+                    )
+                )
+            }
+            val source = imageSource(entry)
+            val part = source?.let { prepareImage(it, parts.size + 1) }
+            if (part != null) {
+                parts.add(part)
+                val rid = "rId${100 + parts.size}"
+                val cx = briefImageWidth(part, total)
+                val cy = (cx.toDouble() * part.height / part.width).toLong()
+                body.append(imageParagraph(rid, cx, cy, parts.size))
+            }
+        }
+
+        if (sorted.isEmpty()) {
+            body.append(
+                paragraph(
+                    "（本日没有记录）",
+                    size = 21,
+                    align = "center",
+                    font = FONT_FANGSONG
+                )
+            )
+        }
+
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(target))).use { zip ->
+            put(zip, "[Content_Types].xml", contentTypes().toByteArray(Charsets.UTF_8))
+            put(zip, "_rels/.rels", rootRels().toByteArray(Charsets.UTF_8))
+            put(zip, "word/document.xml", documentXml(body.toString()).toByteArray(Charsets.UTF_8))
+            put(zip, "word/_rels/document.xml.rels", documentRels(parts).toByteArray(Charsets.UTF_8))
+            parts.forEach { put(zip, "word/${it.name}", it.bytes) }
+        }
+    }
+
+    private fun briefPlace(entry: Entry): String {
+        entry.place?.takeIf { it.isNotBlank() }?.let { return it }
+        val lat = entry.lat
+        val lng = entry.lng
+        return if (lat != null && lng != null) {
+            String.format(Locale.US, "%.5f, %.5f", lat, lng)
+        } else {
+            ""
+        }
+    }
+
+    private fun briefImageWidth(part: Part, total: Int): Long {
+        val count = total.coerceAtLeast(1)
+        val budget = ((USABLE_HEIGHT_IN - TEXT_HEIGHT_IN * count) / count).coerceAtLeast(1.2)
+        val byHeight = budget * EMU_PER_INCH * part.width / part.height
+        val maxCx = 2.4 * EMU_PER_INCH
+        return minOf(maxCx, byHeight).toLong()
     }
 
     // ---------------------------------------------------------------- 内容
@@ -139,7 +253,8 @@ object DocxWriter {
         align: String? = null,
         color: String? = null,
         spaceBefore: Int = 80,
-        firstLineIndent: Boolean = false
+        firstLineIndent: Boolean = false,
+        font: Font = FONT_YAHEI
     ): String {
         val pPr = StringBuilder("<w:pPr>")
         // 注意：OOXML 的 pPr 子元素有顺序要求：spacing → ind → jc
@@ -151,7 +266,7 @@ object DocxWriter {
         pPr.append("</w:pPr>")
 
         val rPr = StringBuilder("<w:rPr>")
-        rPr.append("<w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:eastAsia=\"Microsoft YaHei\"/>")
+        rPr.append("<w:rFonts w:ascii=\"${font.ascii}\" w:hAnsi=\"${font.ascii}\" w:eastAsia=\"${font.eastAsia}\"/>")
         if (bold) rPr.append("<w:b/>")
         if (color != null) rPr.append("<w:color w:val=\"$color\"/>")
         rPr.append("<w:sz w:val=\"$size\"/><w:szCs w:val=\"$size\"/>")
@@ -165,7 +280,7 @@ object DocxWriter {
 
     private fun imageParagraph(rid: String, cx: Long, cy: Long, id: Int): String = buildString {
         append("<w:p><w:pPr>")
-        append("<w:spacing w:before=\"120\" w:after=\"120\"/>")
+        append("<w:spacing w:before=\"60\" w:after=\"60\"/>")
         append("<w:jc w:val=\"center\"/></w:pPr>")
         append("<w:r><w:drawing>")
         append("<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">")

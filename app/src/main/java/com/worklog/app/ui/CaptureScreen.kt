@@ -1,5 +1,13 @@
 package com.worklog.app.ui
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PhotoLibrary
+import java.io.FileOutputStream
+import java.util.Calendar
+
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -105,6 +113,7 @@ fun CaptureScreen(
     var busy by remember { mutableStateOf(false) }
     var sheetEntry by remember { mutableStateOf<Entry?>(null) }
     var note by remember { mutableStateOf("") }
+    var sheetTime by remember { mutableStateOf(0L) }
 
     val videoLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -129,6 +138,52 @@ fun CaptureScreen(
         }
     }
 
+    val galleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            busy = true
+            scope.launch {
+                val entry = withContext(Dispatchers.IO) {
+                    val dest = File(store.mediaDir(), "PIC_${System.currentTimeMillis()}.jpg")
+                    val copied = runCatching {
+                        ctx.contentResolver.openInputStream(uri)?.use { ins ->
+                            FileOutputStream(dest).use { out -> ins.copyTo(out) }
+                        }
+                    }.getOrNull()
+                    if (copied == null || !dest.exists() || dest.length() == 0L) {
+                        null
+                    } else {
+                        val location = Locator.current(ctx)
+                        val place = location?.let {
+                            Locator.placeName(ctx, it.latitude, it.longitude)
+                        }
+                        val item = Entry(
+                            id = UUID.randomUUID().toString(),
+                            time = System.currentTimeMillis(),
+                            kind = "photo",
+                            path = dest.absolutePath,
+                            thumb = null,
+                            note = "",
+                            lat = location?.latitude,
+                            lng = location?.longitude,
+                            place = place
+                        )
+                        store.add(item)
+                        item
+                    }
+                }
+                busy = false
+                if (entry != null) {
+                    onSaved(entry)
+                    sheetEntry = entry
+                } else {
+                    Toast.makeText(ctx, "导入图片失败", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     val speechLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -145,7 +200,10 @@ fun CaptureScreen(
 
     // 打开浮层时，把这条记录已有的备注带进来
     LaunchedEffect(sheetEntry?.id) {
-        sheetEntry?.let { note = it.note }
+        sheetEntry?.let {
+            note = it.note
+            sheetTime = it.time
+        }
     }
 
     // 相机权限拿到后，自动申请一次定位权限
@@ -203,7 +261,30 @@ fun CaptureScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(Modifier.size(56.dp))
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.18f))
+                        .clickable(enabled = !busy) {
+                            runCatching {
+                                galleryLauncher.launch(
+                                    PickVisualMediaRequest(
+                                        ActivityResultContracts.PickVisualMedia.ImageOnly
+                                    )
+                                )
+                            }.onFailure {
+                                Toast.makeText(ctx, "无法打开相册", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.PhotoLibrary,
+                        contentDescription = "从相册选择",
+                        tint = Color.White
+                    )
+                }
 
                 ShutterButton(enabled = imageCapture != null && !busy) {
                     val capture = imageCapture ?: return@ShutterButton
@@ -290,8 +371,8 @@ fun CaptureScreen(
                 Text(
                     buildString {
                         append(
-                            SimpleDateFormat("HH:mm", Locale.CHINA)
-                                .format(Date(current.time))
+                            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA)
+                                .format(Date(sheetTime))
                         )
                         val lat = current.lat
                         val lng = current.lng
@@ -306,6 +387,15 @@ fun CaptureScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                TextButton(onClick = { pickDateTime(ctx, sheetTime) { sheetTime = it } }) {
+                    Icon(
+                        Icons.Filled.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("修改日期时间")
+                }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = note,
@@ -347,7 +437,7 @@ fun CaptureScreen(
                     TextButton(onClick = { sheetEntry = null }) { Text("跳过") }
                     Button(
                         onClick = {
-                            val updated = current.copy(note = note.trim())
+                            val updated = current.copy(time = sheetTime, note = note.trim())
                             scope.launch {
                                 withContext(Dispatchers.IO) { store.update(updated) }
                                 onSaved(updated)
@@ -467,6 +557,34 @@ private fun stampText(time: Long, place: String?, lat: Double?, lng: Double?): S
             null
         }
     return if (where != null) "$clock  $where" else clock
+}
+
+/** 依次弹出日期、时间选择框 */
+private fun pickDateTime(ctx: Context, initial: Long, onPicked: (Long) -> Unit) {
+    val cal = Calendar.getInstance().apply { timeInMillis = initial }
+    DatePickerDialog(
+        ctx,
+        { _, year, month, dayOfMonth ->
+            cal.set(Calendar.YEAR, year)
+            cal.set(Calendar.MONTH, month)
+            cal.set(Calendar.DAY_OF_MONTH, dayOfMonth)
+            TimePickerDialog(
+                ctx,
+                { _, hour, minute ->
+                    cal.set(Calendar.HOUR_OF_DAY, hour)
+                    cal.set(Calendar.MINUTE, minute)
+                    cal.set(Calendar.SECOND, 0)
+                    onPicked(cal.timeInMillis)
+                },
+                cal.get(Calendar.HOUR_OF_DAY),
+                cal.get(Calendar.MINUTE),
+                true
+            ).show()
+        },
+        cal.get(Calendar.YEAR),
+        cal.get(Calendar.MONTH),
+        cal.get(Calendar.DAY_OF_MONTH)
+    ).show()
 }
 
 /** 本次进程内是否已经自动申请过定位权限，避免反复弹框 */

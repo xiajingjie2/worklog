@@ -6,6 +6,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.worklog.app.data.AppSettings
 import com.worklog.app.data.Entry
 import com.worklog.app.data.EntryStore
 import com.worklog.app.export.Exporter
@@ -81,6 +85,11 @@ fun LogScreen(
     var day by remember { mutableStateOf(LocalDate.now()) }
     var exporting by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Entry?>(null) }
+
+    val settings = remember { AppSettings(ctx) }
+    var mode by remember { mutableStateOf(settings.exportMode) }
+    var showModeDialog by remember { mutableStateOf(false) }
+    var exportedUri by remember { mutableStateOf<Uri?>(null) }
 
     val dayEntries = remember(entries, day) {
         entries
@@ -136,31 +145,98 @@ fun LogScreen(
             }
         }
 
-        Button(
-            onClick = {
-                exporting = true
-                scope.launch {
-                    try {
-                        val uri = withContext(Dispatchers.IO) {
-                            Exporter.exportDocx(ctx, day, dayEntries)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = { showModeDialog = true },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("模式：" + AppSettings.label(mode))
+            }
+            Button(
+                onClick = {
+                    exporting = true
+                    scope.launch {
+                        try {
+                            val uri = withContext(Dispatchers.IO) {
+                                Exporter.exportDocx(ctx, day, dayEntries, mode)
+                            }
+                            exportedUri = uri
+                        } catch (t: Throwable) {
+                            Toast.makeText(
+                                ctx,
+                                "导出失败：" + (t.message ?: t.javaClass.simpleName),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } finally {
+                            exporting = false
                         }
-                        shareDocx(ctx, uri)
-                    } catch (t: Throwable) {
-                        Toast.makeText(
-                            ctx,
-                            "导出失败：" + (t.message ?: t.javaClass.simpleName),
-                            Toast.LENGTH_LONG
-                        ).show()
-                    } finally {
-                        exporting = false
+                    }
+                },
+                enabled = dayEntries.isNotEmpty() && !exporting,
+                modifier = Modifier.weight(1.4f)
+            ) {
+                Text(if (exporting) "正在生成…" else "导出 Word")
+            }
+        }
+    }
+
+    val shared = exportedUri
+    if (shared != null) {
+        AlertDialog(
+            onDismissRequest = { exportedUri = null },
+            title = { Text("已保存到「下载/工作日志」") },
+            text = { Text("文件放在手机的下载目录里，卸载 App 也不会丢。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    exportedUri = null
+                    openDoc(ctx, shared)
+                }) { Text("预览") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    exportedUri = null
+                    shareDocx(ctx, shared)
+                }) { Text("分享") }
+            }
+        )
+    }
+
+    if (showModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showModeDialog = false },
+            title = { Text("选择导出模式") },
+            text = {
+                Column {
+                    listOf(
+                        AppSettings.MODE_LOG to "工作日志摘要",
+                        AppSettings.MODE_BRIEF to "简报"
+                    ).forEach { (value, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    mode = value
+                                    settings.exportMode = value
+                                    showModeDialog = false
+                                }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = mode == value, onClick = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(label)
+                        }
                     }
                 }
             },
-            enabled = dayEntries.isNotEmpty() && !exporting,
-            modifier = Modifier.fillMaxWidth().padding(12.dp)
-        ) {
-            Text(if (exporting) "正在生成…" else "导出 Word 并分享")
-        }
+            confirmButton = {
+                TextButton(onClick = { showModeDialog = false }) { Text("关闭") }
+            }
+        )
     }
 
     val target = pendingDelete
@@ -266,6 +342,18 @@ private fun shareDocx(ctx: Context, uri: Uri) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     ctx.startActivity(Intent.createChooser(intent, "分享工作日志"))
+}
+
+/** 用系统里能打开 docx 的应用预览 */
+private fun openDoc(ctx: Context, uri: Uri) {
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, Exporter.MIME_DOCX)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { ctx.startActivity(intent) }
+        .onFailure {
+            Toast.makeText(ctx, "没有能打开 Word 的应用", Toast.LENGTH_SHORT).show()
+        }
 }
 
 /** 优先显示地名，没有地名就退化成坐标，两者都没有返回空串 */
