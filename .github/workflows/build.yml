@@ -46,7 +46,7 @@ jobs:
 
       - name: Rename APK
         run: |
-          VER=$(sed -n 's/^val appVersionName = "\(.*\)"/\1/p' app/build.gradle.kts | head -n 1)
+          VER=$(sed -n 's/^val appVersionName = "\(.*\)"/\1/p' app/build.gradle.kts | head -n 1 | tr -d '\r')
           cd app/build/outputs/apk/debug
           mv app-debug.apk "牛马APP-V${VER}.apk"
           ls -l
