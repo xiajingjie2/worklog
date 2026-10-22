@@ -215,6 +215,45 @@ fun CaptureScreen(
         }
     }
 
+    var pendingShot by remember { mutableStateOf<File?>(null) }
+
+    val cameraShotLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val file = pendingShot
+        pendingShot = null
+        if (result.resultCode == Activity.RESULT_OK && file != null &&
+            file.exists() && file.length() > 0L
+        ) {
+            busy = true
+            scope.launch {
+                val entry = withContext(Dispatchers.IO) {
+                    buildEntry(ctx, store, file, "photo", null)
+                }
+                busy = false
+                onSaved(entry)
+                sheetEntry = entry
+            }
+        }
+    }
+
+    fun shootWithSystemCamera() {
+        if (busy) return
+        val file = File(store.mediaDir(), "IMG_${System.currentTimeMillis()}.jpg")
+        pendingShot = file
+        runCatching {
+            val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", file)
+            val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            cameraShotLauncher.launch(intent)
+        }.onFailure {
+            Toast.makeText(ctx, "没有可用的相机应用", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val speechLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -264,7 +303,15 @@ fun CaptureScreen(
                 }
             }
         } else {
-            CameraPreview(previewView, Modifier.fillMaxSize()) { imageCapture = it }
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color(0xFF111827)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "点下方按钮调用系统相机",
+                    color = Color.White.copy(alpha = 0.55f)
+                )
+            }
 
             AssistChip(
                 onClick = {
@@ -317,42 +364,7 @@ fun CaptureScreen(
                     )
                 }
 
-                ShutterButton(enabled = imageCapture != null && !busy) {
-                    val capture = imageCapture ?: return@ShutterButton
-                    if (busy) return@ShutterButton
-                    busy = true
-                    // 关键：按拍照瞬间的屏幕方向设置旋转，横拍才会正确记录方向
-                    previewView.display?.let { capture.targetRotation = it.rotation }
-                    val file = File(store.mediaDir(), "IMG_${System.currentTimeMillis()}.jpg")
-                    val options = ImageCapture.OutputFileOptions.Builder(file).build()
-                    capture.takePicture(
-                        options,
-                        ContextCompat.getMainExecutor(ctx),
-                        object : ImageCapture.OnImageSavedCallback {
-                            override fun onImageSaved(
-                                outputFileResults: ImageCapture.OutputFileResults
-                            ) {
-                                scope.launch {
-                                    val entry = withContext(Dispatchers.IO) {
-                                        buildEntry(ctx, store, file, "photo", null)
-                                    }
-                                    busy = false
-                                    onSaved(entry)
-                                    sheetEntry = entry
-                                }
-                            }
-
-                            override fun onError(exception: ImageCaptureException) {
-                                busy = false
-                                Toast.makeText(
-                                    ctx,
-                                    "拍照失败：" + exception.message,
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-                    )
-                }
+                ShutterButton(enabled = !busy) { shootWithSystemCamera() }
 
                 Box(
                     modifier = Modifier

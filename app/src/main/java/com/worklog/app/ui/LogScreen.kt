@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.OutlinedTextField
+import androidx.core.content.FileProvider
 import java.io.FileOutputStream
 import java.util.Calendar
 
@@ -140,6 +141,38 @@ fun LogScreen(
                 }
                 editPaths = (editPaths + added).distinct().take(2)
             }
+        }
+    }
+
+    var showImageSource by remember { mutableStateOf(false) }
+    var editShotFile by remember { mutableStateOf<File?>(null) }
+
+    val editCameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val file = editShotFile
+        editShotFile = null
+        if (result.resultCode == android.app.Activity.RESULT_OK && file != null &&
+            file.exists() && file.length() > 0L
+        ) {
+            editPaths = (editPaths + file.absolutePath).take(2)
+        }
+    }
+
+    fun shootForEdit() {
+        val dir = File(ctx.filesDir, "media").apply { if (!exists()) mkdirs() }
+        val file = File(dir, "IMG_${System.currentTimeMillis()}.jpg")
+        editShotFile = file
+        runCatching {
+            val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", file)
+            val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            editCameraLauncher.launch(intent)
+        }.onFailure {
+            Toast.makeText(ctx, "没有可用的相机应用", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -312,17 +345,7 @@ fun LogScreen(
                             Spacer(Modifier.width(8.dp))
                         }
                         if (editPaths.size < 2) {
-                            OutlinedButton(
-                                onClick = {
-                                    runCatching {
-                                        editPicker.launch(
-                                            PickVisualMediaRequest(
-                                                ActivityResultContracts.PickVisualMedia.ImageOnly
-                                            )
-                                        )
-                                    }
-                                }
-                            ) {
+                            OutlinedButton(onClick = { showImageSource = true }) {
                                 Text("+ 图片")
                             }
                         }
@@ -382,6 +405,40 @@ fun LogScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showExportDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showImageSource) {
+        AlertDialog(
+            onDismissRequest = { showImageSource = false },
+            title = { Text("添加图片") },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            showImageSource = false
+                            shootForEdit()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("拍摄") }
+                    TextButton(
+                        onClick = {
+                            showImageSource = false
+                            runCatching {
+                                editPicker.launch(
+                                    PickVisualMediaRequest(
+                                        ActivityResultContracts.PickVisualMedia.ImageOnly
+                                    )
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("从相册选择") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showImageSource = false }) { Text("取消") }
             }
         )
     }
