@@ -241,7 +241,8 @@ object DocxWriter {
                     paragraph((index + 1).toString(), size = 21, align = "center", spaceBefore = 40)
                 )
             )
-            body.append(cell(widths[1], paragraph(placeText(entry), size = 21, spaceBefore = 40)))
+            val (addr, detail) = splitRecord(entry)
+            body.append(cell(widths[1], paragraph(addr, size = 21, spaceBefore = 40)))
 
             body.append("<w:tc><w:tcPr><w:tcW w:w=\"${widths[2]}\" w:type=\"dxa\"/>")
             body.append("<w:vAlign w:val=\"center\"/></w:tcPr>")
@@ -258,7 +259,7 @@ object DocxWriter {
             }
             body.append("</w:tc>")
 
-            body.append(cell(widths[3], paragraph("", size = 21)))
+            body.append(cell(widths[3], paragraph(detail, size = 21)))
             body.append(cell(widths[4], paragraph("", size = 21)))
             body.append("</w:tr>")
         }
@@ -284,7 +285,7 @@ object DocxWriter {
             val byHeight = (1.6 * EMU_PER_INCH * part.width / part.height).toLong()
             val cx = minOf(maxWidthEmu, byHeight)
             val cy = (cx.toDouble() * part.height / part.width).toLong()
-            if (i > 0) runs.append(gapRun())
+            if (i > 0) runs.append(gapRun(1))
             runs.append(drawingRun(rid, cx, cy))
         }
         return "<w:p><w:pPr><w:spacing w:before=\"40\" w:after=\"40\"/>" +
@@ -367,6 +368,21 @@ object DocxWriter {
         } else {
             ""
         }
+    }
+
+    /**
+     * 备注里第一个逗号/冒号之前是「地址」，之后放进第四列。
+     * 没有分隔符就整条当地址；备注为空则退回 GPS 地名。
+     */
+    private fun splitRecord(entry: Entry): Pair<String, String> {
+        val text = entry.note.trim()
+        val fallback = placeText(entry)
+        if (text.isEmpty()) return fallback to ""
+        val idx = text.indexOfFirst { it == '，' || it == ',' || it == '：' || it == ':' }
+        if (idx < 0) return text to ""
+        val head = text.substring(0, idx).trim().ifBlank { fallback }
+        val tail = text.substring(idx + 1).trim()
+        return head to tail
     }
 
     private fun imageSources(entry: Entry): List<File> {
@@ -455,9 +471,9 @@ object DocxWriter {
             "<w:jc w:val=\"center\"/></w:pPr>$runs</w:p>"
     }
 
-    private fun gapRun(): String =
+    private fun gapRun(spaces: Int = 2): String =
         "<w:r><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:eastAsia=\"Microsoft YaHei\"/>" +
-            "<w:sz w:val=\"21\"/></w:rPr><w:t xml:space=\"preserve\">　　</w:t></w:r>"
+            "<w:sz w:val=\"21\"/></w:rPr><w:t xml:space=\"preserve\">" + "　".repeat(spaces) + "</w:t></w:r>"
 
     private fun drawingRun(rid: Int, cx: Long, cy: Long): String = buildString {
         append("<w:r><w:drawing>")

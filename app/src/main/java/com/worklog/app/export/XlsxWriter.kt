@@ -45,26 +45,24 @@ object XlsxWriter {
 
         entries.sortedBy { it.time }.forEachIndexed { index, entry ->
             val row = 3 + index
+            val (addr, detail) = splitRecord(entry)
             sheet.append("<row r=\"$row\" ht=\"96\" customHeight=\"1\">")
             sheet.append(textCell("A$row", (index + 1).toString()))
-            sheet.append(textCell("B$row", placeOf(entry)))
+            sheet.append(textCell("B$row", addr))
             sheet.append("<c r=\"C$row\"/>")
-            sheet.append(textCell("D$row", ""))
+            sheet.append(textCell("D$row", detail))
             sheet.append(textCell("E$row", ""))
             sheet.append("</row>")
 
             val files = imageSources(entry)
             val count = files.size
+            val gap = 128_000L   // 约一个中文字符宽
             files.forEachIndexed { i, file ->
                 val img = prepareImage(file, images.size + 1) ?: return@forEachIndexed
                 images.add(img)
                 val rel = "rId${100 + images.size}"
-                val fromOff = if (count >= 2) {
-                    if (i == 0) 0L else PHOTO_COL_EMU / 2
-                } else 0L
-                val toOff = if (count >= 2) {
-                    if (i == 0) PHOTO_COL_EMU / 2 else PHOTO_COL_EMU
-                } else PHOTO_COL_EMU
+                val fromOff = if (count >= 2 && i > 0) PHOTO_COL_EMU / 2 + gap / 2 else 0L
+                val toOff = if (count >= 2 && i == 0) PHOTO_COL_EMU / 2 - gap / 2 else PHOTO_COL_EMU
 
                 drawingAnchors.append(anchor(row - 1, fromOff, toOff, images.size))
                 drawingRelsAdd(rel, img.name)
@@ -146,6 +144,21 @@ object XlsxWriter {
         } else {
             ""
         }
+    }
+
+    /**
+     * 备注里第一个逗号/冒号之前是「地址」，之后放进第四列。
+     * 没有分隔符就整条当地址；备注为空则退回 GPS 地名。
+     */
+    private fun splitRecord(entry: Entry): Pair<String, String> {
+        val text = entry.note.trim()
+        val fallback = placeOf(entry)
+        if (text.isEmpty()) return fallback to ""
+        val idx = text.indexOfFirst { it == '，' || it == ',' || it == '：' || it == ':' }
+        if (idx < 0) return text to ""
+        val head = text.substring(0, idx).trim().ifBlank { fallback }
+        val tail = text.substring(idx + 1).trim()
+        return head to tail
     }
 
     private fun anchor(row: Int, fromOff: Long, toOff: Long, id: Int): String = buildString {
