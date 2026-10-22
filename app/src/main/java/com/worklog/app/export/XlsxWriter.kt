@@ -31,28 +31,32 @@ object XlsxWriter {
         val images = mutableListOf<Img>()
         val drawingAnchors = StringBuilder()
 
+        val maxPhotos = entries.maxOfOrNull { imageSources(it).take(2).size } ?: 1
+        val photoColChars = if (maxPhotos >= 2) 30 else 18
+        val photoColEmu = ((photoColChars * 7 + 5) * 9525).toLong()
+
         val sheet = StringBuilder()
         sheet.append("<row r=\"1\" ht=\"30\" customHeight=\"1\">")
-        sheet.append(textCell("A1", title))
+        sheet.append(textCell("A1", title, 2))
         sheet.append("</row>")
 
         sheet.append("<row r=\"2\" ht=\"24\" customHeight=\"1\">")
-        sheet.append(textCell("A2", "序号"))
-        sheet.append(textCell("B2", "地址"))
-        sheet.append(textCell("C2", "照片"))
-        sheet.append(textCell("D2", ""))
-        sheet.append(textCell("E2", ""))
+        sheet.append(textCell("A2", "序号", 1))
+        sheet.append(textCell("B2", "地址", 1))
+        sheet.append(textCell("C2", "照片", 1))
+        sheet.append(textCell("D2", "", 1))
+        sheet.append(textCell("E2", "", 1))
         sheet.append("</row>")
 
         entries.sortedBy { it.time }.forEachIndexed { index, entry ->
             val row = 3 + index
             val (addr, detail) = splitRecord(entry)
-            sheet.append("<row r=\"$row\" ht=\"96\" customHeight=\"1\">")
-            sheet.append(textCell("A$row", (index + 1).toString()))
-            sheet.append(textCell("B$row", addr))
-            sheet.append("<c r=\"C$row\"/>")
-            sheet.append(textCell("D$row", detail))
-            sheet.append(textCell("E$row", ""))
+            sheet.append("<row r=\"$row\" ht=\"110\" customHeight=\"1\">")
+            sheet.append(textCell("A$row", (index + 1).toString(), 1))
+            sheet.append(textCell("B$row", addr, 1))
+            sheet.append("<c r=\"C$row\" s=\"1\"/>")
+            sheet.append(textCell("D$row", detail, 1))
+            sheet.append(textCell("E$row", "", 1))
             sheet.append("</row>")
 
             val files = imageSources(entry)
@@ -62,8 +66,8 @@ object XlsxWriter {
                 val img = prepareImage(file, images.size + 1) ?: return@forEachIndexed
                 images.add(img)
                 val rel = "rId${100 + images.size}"
-                val fromOff = if (count >= 2 && i > 0) PHOTO_COL_EMU / 2 + gap / 2 else 0L
-                val toOff = if (count >= 2 && i == 0) PHOTO_COL_EMU / 2 - gap / 2 else PHOTO_COL_EMU
+                val fromOff = if (count >= 2 && i > 0) photoColEmu / 2 + gap / 2 else 0L
+                val toOff = if (count >= 2 && i == 0) photoColEmu / 2 - gap / 2 else photoColEmu
 
                 drawingAnchors.append(anchor(row - 1, fromOff, toOff, images.size))
                 drawingRelsAdd(rel, img.name)
@@ -75,11 +79,11 @@ object XlsxWriter {
             append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" ")
             append("xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">")
             append("<cols>")
-            append("<col min=\"1\" max=\"1\" width=\"8\" customWidth=\"1\"/>")
-            append("<col min=\"2\" max=\"2\" width=\"30\" customWidth=\"1\"/>")
-            append("<col min=\"3\" max=\"3\" width=\"26\" customWidth=\"1\"/>")
-            append("<col min=\"4\" max=\"4\" width=\"18\" customWidth=\"1\"/>")
-            append("<col min=\"5\" max=\"5\" width=\"18\" customWidth=\"1\"/>")
+            append("<col min=\"1\" max=\"1\" width=\"6\" customWidth=\"1\"/>")
+            append("<col min=\"2\" max=\"2\" width=\"26\" customWidth=\"1\"/>")
+            append("<col min=\"3\" max=\"3\" width=\"$photoColChars\" customWidth=\"1\"/>")
+            append("<col min=\"4\" max=\"4\" width=\"26\" customWidth=\"1\"/>")
+            append("<col min=\"5\" max=\"5\" width=\"10\" customWidth=\"1\"/>")
             append("</cols>")
             append("<sheetData>").append(sheet).append("</sheetData>")
             append("<mergeCells count=\"1\"><mergeCell ref=\"A1:E1\"/></mergeCells>")
@@ -92,6 +96,7 @@ object XlsxWriter {
             put(zip, "_rels/.rels", rootRels())
             put(zip, "xl/workbook.xml", workbook())
             put(zip, "xl/_rels/workbook.xml.rels", workbookRels())
+            put(zip, "xl/styles.xml", stylesXml())
             put(zip, "xl/worksheets/sheet1.xml", sheetXml)
             put(zip, "xl/worksheets/_rels/sheet1.xml.rels", sheetRels())
             put(zip, "xl/drawings/drawing1.xml", drawingXml(drawingAnchors.toString()))
@@ -104,7 +109,7 @@ object XlsxWriter {
 
     private fun prepareImage(file: File, index: Int): Img? {
         return try {
-            val bitmap = ImageOps.loadUpright(file, MAX_SIDE) ?: return null
+            val bitmap = ImageOps.loadUpright(file, MAX_SIDE, 4f / 3f) ?: return null
             val buffer = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 82, buffer)
             bitmap.recycle()
@@ -121,8 +126,10 @@ object XlsxWriter {
 
     // ---------------------------------------------------------------- 单元格
 
-    private fun textCell(ref: String, value: String): String =
-        "<c r=\"$ref\" t=\"inlineStr\"><is><t xml:space=\"preserve\">${esc(value)}</t></is></c>"
+    private fun textCell(ref: String, value: String, style: Int = 0): String {
+        val s = if (style > 0) " s=\"$style\"" else ""
+        return "<c r=\"$ref\"$s t=\"inlineStr\"><is><t xml:space=\"preserve\">${esc(value)}</t></is></c>"
+    }
 
     private fun placeOf(entry: Entry): String {
         entry.place?.takeIf { it.isNotBlank() }?.let { return it }
@@ -193,6 +200,7 @@ object XlsxWriter {
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
 <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
 <Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>"""
 
     private fun rootRels(): String = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -208,7 +216,36 @@ object XlsxWriter {
     private fun workbookRels(): String = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="$relPrefix/worksheet" Target="worksheets/sheet1.xml"/>
+<Relationship Id="rId2" Type="$relPrefix/styles" Target="styles.xml"/>
 </Relationships>"""
+
+    private fun stylesXml(): String = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="2">
+<font><sz val="11"/><name val="宋体"/></font>
+<font><b/><sz val="14"/><name val="宋体"/></font>
+</fonts>
+<fills count="2">
+<fill><patternFill patternType="none"/></fill>
+<fill><patternFill patternType="gray125"/></fill>
+</fills>
+<borders count="2">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border>
+<left style="thin"><color rgb="FF808080"/></left>
+<right style="thin"><color rgb="FF808080"/></right>
+<top style="thin"><color rgb="FF808080"/></top>
+<bottom style="thin"><color rgb="FF808080"/></bottom>
+<diagonal/>
+</border>
+</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="3">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+</cellXfs>
+</styleSheet>"""
 
     private fun sheetRels(): String = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">

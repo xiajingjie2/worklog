@@ -218,7 +218,12 @@ object DocxWriter {
         body.append(paragraph(title, size = 40, bold = true, align = "center", color = "111827"))
         body.append(paragraph("", size = 14))
 
-        val widths = listOf(700, 3000, 2900, 951, 951)
+        val maxPhotos = entries.maxOfOrNull { imageSources(it).take(2).size } ?: 1
+        val widths = if (maxPhotos >= 2) {
+            listOf(700, 2100, 3000, 2100, 600)
+        } else {
+            listOf(700, 2800, 1600, 2800, 600)
+        }
         body.append("<w:tbl><w:tblPr><w:tblW w:w=\"8502\" w:type=\"dxa\"/><w:jc w:val=\"center\"/>")
         body.append("<w:tblBorders>")
         listOf("top", "left", "bottom", "right", "insideH", "insideV").forEach { edge ->
@@ -255,9 +260,8 @@ object DocxWriter {
             body.append("<w:vAlign w:val=\"center\"/></w:tcPr>")
             val entryParts = mutableListOf<Part>()
             val tableFiles = imageSources(entry).take(2)
-            val tableAspect = uniformAspect(tableFiles)
             tableFiles.forEach { file ->
-                prepareImage(file, parts.size + entryParts.size + 1, tableAspect)
+                prepareImage(file, parts.size + entryParts.size + 1, 4f / 3f)
                     ?.let { entryParts.add(it) }
             }
             if (entryParts.isEmpty()) {
@@ -265,7 +269,7 @@ object DocxWriter {
             } else {
                 val start = parts.size
                 parts.addAll(entryParts)
-                body.append(cellImages(start, entryParts))
+                body.append(cellImages(start, entryParts, widths[2]))
             }
             body.append("</w:tc>")
 
@@ -283,20 +287,20 @@ object DocxWriter {
         "<w:tc><w:tcPr><w:tcW w:w=\"$width\" w:type=\"dxa\"/>" +
             "<w:vAlign w:val=\"center\"/></w:tcPr>$content</w:tc>"
 
-    private fun cellImages(startIndex: Int, parts: List<Part>): String {
+    private fun cellImages(startIndex: Int, parts: List<Part>, columnTwips: Int): String {
         val runs = StringBuilder()
+        val columnEmu = columnTwips.toLong() * 635L // 1 twip = 635 EMU
+        val gapEmu = (0.14 * EMU_PER_INCH).toLong()
         val maxWidthEmu = if (parts.size >= 2) {
-            (0.85 * EMU_PER_INCH).toLong()
+            ((columnEmu - gapEmu) / 2).coerceAtLeast(100_000L)
         } else {
-            (1.6 * EMU_PER_INCH).toLong()
+            (columnEmu - 60_000L).coerceAtLeast(100_000L)
         }
         parts.forEachIndexed { i, part ->
             val rid = 100 + startIndex + i + 1
-            val byHeight = (1.6 * EMU_PER_INCH * part.width / part.height).toLong()
-            val cx = minOf(maxWidthEmu, byHeight)
-            val cy = (cx.toDouble() * part.height / part.width).toLong()
+            val cy = (maxWidthEmu.toDouble() * part.height / part.width).toLong()
             if (i > 0) runs.append(gapRun(1))
-            runs.append(drawingRun(rid, cx, cy))
+            runs.append(drawingRun(rid, maxWidthEmu, cy))
         }
         return "<w:p><w:pPr><w:spacing w:before=\"40\" w:after=\"40\"/>" +
             "<w:jc w:val=\"center\"/></w:pPr>$runs</w:p>"
