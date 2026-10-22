@@ -3,6 +3,7 @@ package com.worklog.app.export
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.worklog.app.data.Entry
+import com.worklog.app.util.ImageOps
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -103,19 +104,7 @@ object XlsxWriter {
 
     private fun prepareImage(file: File, index: Int): Img? {
         return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(file.absolutePath, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-            var sample = 1
-            while (bounds.outWidth / sample > MAX_SIDE || bounds.outHeight / sample > MAX_SIDE) {
-                sample *= 2
-            }
-            val bitmap = BitmapFactory.decodeFile(
-                file.absolutePath,
-                BitmapFactory.Options().apply { inSampleSize = sample }
-            ) ?: return null
-
+            val bitmap = ImageOps.loadUpright(file, MAX_SIDE) ?: return null
             val buffer = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 82, buffer)
             bitmap.recycle()

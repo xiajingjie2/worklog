@@ -5,6 +5,8 @@ import android.app.TimePickerDialog
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.OutlinedButton
+import androidx.core.content.FileProvider
 import java.io.FileOutputStream
 import java.util.Calendar
 
@@ -156,6 +158,49 @@ fun CaptureScreen(
                     Toast.makeText(ctx, "导入图片失败", Toast.LENGTH_SHORT).show()
                 }
             }
+        }
+    }
+
+    var pendingSecond by remember { mutableStateOf<File?>(null) }
+
+    val secondShotLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val file = pendingSecond
+        pendingSecond = null
+        val currentEntry = sheetEntry
+        if (result.resultCode == Activity.RESULT_OK && file != null &&
+            file.exists() && file.length() > 0L && currentEntry != null
+        ) {
+            scope.launch {
+                val updated = withContext(Dispatchers.IO) {
+                    val entry = currentEntry.copy(
+                        paths = (currentEntry.paths + file.absolutePath).take(2)
+                    )
+                    store.update(entry)
+                    entry
+                }
+                sheetEntry = updated
+                onSaved(updated)
+            }
+        }
+    }
+
+    fun shootSecondPhoto() {
+        val currentEntry = sheetEntry ?: return
+        if (currentEntry.paths.size >= 2) return
+        val file = File(store.mediaDir(), "IMG_${System.currentTimeMillis()}.jpg")
+        pendingSecond = file
+        runCatching {
+            val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", file)
+            val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            secondShotLauncher.launch(intent)
+        }.onFailure {
+            Toast.makeText(ctx, "没有可用的相机应用", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -370,6 +415,19 @@ fun CaptureScreen(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text("修改日期时间")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "已拍 ${current.paths.size} 张（最多 2 张）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    if (current.paths.size < 2) {
+                        OutlinedButton(onClick = { shootSecondPhoto() }) {
+                            Text("再拍一张")
+                        }
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(

@@ -3,6 +3,7 @@ package com.worklog.app.export
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.worklog.app.data.Entry
+import com.worklog.app.util.ImageOps
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -66,8 +67,11 @@ object DocxWriter {
             val text = entry.note.trim()
             val (first, second) = splitNote(text)
             val entryParts = mutableListOf<Part>()
-            imageSources(entry).forEach { file ->
-                prepareImage(file, parts.size + entryParts.size + 1)?.let { entryParts.add(it) }
+            val files = imageSources(entry)
+            val uniform = uniformAspect(files)
+            files.forEach { file ->
+                prepareImage(file, parts.size + entryParts.size + 1, uniform)
+                    ?.let { entryParts.add(it) }
             }
 
             val estimated = 0.30 + estimateText(first) + estimateText(second) +
@@ -181,8 +185,11 @@ object DocxWriter {
             }
 
             val entryParts = mutableListOf<Part>()
-            imageSources(entry).forEach { file ->
-                prepareImage(file, parts.size + entryParts.size + 1)?.let { entryParts.add(it) }
+            val files = imageSources(entry)
+            val uniform = uniformAspect(files)
+            files.forEach { file ->
+                prepareImage(file, parts.size + entryParts.size + 1, uniform)
+                    ?.let { entryParts.add(it) }
             }
             if (entryParts.isNotEmpty()) {
                 val start = parts.size
@@ -247,8 +254,11 @@ object DocxWriter {
             body.append("<w:tc><w:tcPr><w:tcW w:w=\"${widths[2]}\" w:type=\"dxa\"/>")
             body.append("<w:vAlign w:val=\"center\"/></w:tcPr>")
             val entryParts = mutableListOf<Part>()
-            imageSources(entry).take(2).forEach { file ->
-                prepareImage(file, parts.size + entryParts.size + 1)?.let { entryParts.add(it) }
+            val tableFiles = imageSources(entry).take(2)
+            val tableAspect = uniformAspect(tableFiles)
+            tableFiles.forEach { file ->
+                prepareImage(file, parts.size + entryParts.size + 1, tableAspect)
+                    ?.let { entryParts.add(it) }
             }
             if (entryParts.isEmpty()) {
                 body.append(paragraph("", size = 18, align = "center"))
@@ -507,42 +517,30 @@ object DocxWriter {
 
     // ---------------------------------------------------------------- 图片
 
-    private fun prepareImage(file: File, index: Int): Part? {
+    private fun prepareImage(file: File, index: Int, targetAspect: Float? = null): Part? {
         return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(file.absolutePath, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-            var sample = 1
-            while (bounds.outWidth / sample > MAX_IMAGE_WIDTH) sample *= 2
-
-            val bitmap = BitmapFactory.decodeFile(
-                file.absolutePath,
-                BitmapFactory.Options().apply { inSampleSize = sample }
-            ) ?: return null
-
-            val scaled = if (bitmap.width > MAX_IMAGE_WIDTH) {
-                val h = (bitmap.height.toDouble() * MAX_IMAGE_WIDTH / bitmap.width)
-                    .toInt().coerceAtLeast(1)
-                Bitmap.createScaledBitmap(bitmap, MAX_IMAGE_WIDTH, h, true)
-                    .also { bitmap.recycle() }
-            } else {
-                bitmap
-            }
-
+            val bitmap = ImageOps.loadUpright(file, MAX_IMAGE_WIDTH, targetAspect) ?: return null
             val buffer = ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.JPEG, 82, buffer)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 82, buffer)
             val part = Part(
                 name = "media/image$index.jpg",
                 bytes = buffer.toByteArray(),
-                width = scaled.width,
-                height = scaled.height
+                width = bitmap.width,
+                height = bitmap.height
             )
-            scaled.recycle()
+            bitmap.recycle()
             part
         } catch (t: Throwable) {
             null
         }
+    }
+
+    /** 两张图宽高比差得多时，统一裁成 4:3 横向，排版更整齐 */
+    private fun uniformAspect(files: List<File>): Float? {
+        if (files.size != 2) return null
+        val a = ImageOps.aspectOf(files[0]) ?: return null
+        val b = ImageOps.aspectOf(files[1]) ?: return null
+        return if (kotlin.math.abs(a - b) > 0.15f) 4f / 3f else null
     }
 
     // ---------------------------------------------------------------- 包结构
