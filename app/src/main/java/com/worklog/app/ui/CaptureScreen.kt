@@ -17,6 +17,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.speech.RecognizerIntent
+import android.view.Surface
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -118,6 +119,14 @@ fun CaptureScreen(
     var sheetEntry by remember { mutableStateOf<Entry?>(null) }
     var note by remember { mutableStateOf("") }
     var sheetTime by remember { mutableStateOf(0L) }
+
+    // 预览用的 View 提到这里，拍照前才能拿到当前屏幕方向
+    val previewView = remember {
+        PreviewView(ctx).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        }
+    }
 
     val videoLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -255,7 +264,7 @@ fun CaptureScreen(
                 }
             }
         } else {
-            CameraPreview(Modifier.fillMaxSize()) { imageCapture = it }
+            CameraPreview(previewView, Modifier.fillMaxSize()) { imageCapture = it }
 
             AssistChip(
                 onClick = {
@@ -312,6 +321,8 @@ fun CaptureScreen(
                     val capture = imageCapture ?: return@ShutterButton
                     if (busy) return@ShutterButton
                     busy = true
+                    // 关键：按拍照瞬间的屏幕方向设置旋转，横拍才会正确记录方向
+                    previewView.display?.let { capture.targetRotation = it.rotation }
                     val file = File(store.mediaDir(), "IMG_${System.currentTimeMillis()}.jpg")
                     val options = ImageCapture.OutputFileOptions.Builder(file).build()
                     capture.takePicture(
@@ -506,15 +517,13 @@ private fun ShutterButton(enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CameraPreview(modifier: Modifier, onCapture: (ImageCapture?) -> Unit) {
+private fun CameraPreview(
+    previewView: PreviewView,
+    modifier: Modifier,
+    onCapture: (ImageCapture?) -> Unit
+) {
     val ctx = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val previewView = remember {
-        PreviewView(ctx).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-        }
-    }
 
     DisposableEffect(lifecycleOwner) {
         val future = ProcessCameraProvider.getInstance(ctx)
@@ -525,8 +534,10 @@ private fun CameraPreview(modifier: Modifier, onCapture: (ImageCapture?) -> Unit
                     val preview = Preview.Builder().build().also {
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
+                    val displayRotation = previewView.display?.rotation ?: Surface.ROTATION_0
                     val capture = ImageCapture.Builder()
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                        .setTargetRotation(displayRotation)
                         .build()
                     provider.unbindAll()
                     provider.bindToLifecycle(
