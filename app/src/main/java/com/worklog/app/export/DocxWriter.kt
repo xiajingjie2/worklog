@@ -200,6 +200,97 @@ object DocxWriter {
         zip(target, parts, body)
     }
 
+    /**
+     * 表格模式：抬头「采集数据表」，下面五列表格
+     * 序号 / 地址 / 照片 / 空 / 空。
+     */
+    fun writeTable(target: File, title: String, entries: List<Entry>) {
+        val parts = mutableListOf<Part>()
+        val body = StringBuilder()
+
+        body.append(paragraph(title, size = 40, bold = true, align = "center", color = "111827"))
+        body.append(paragraph("", size = 14))
+
+        val widths = listOf(700, 3000, 2900, 951, 951)
+        body.append("<w:tbl><w:tblPr><w:tblW w:w=\"8502\" w:type=\"dxa\"/><w:jc w:val=\"center\"/>")
+        body.append("<w:tblBorders>")
+        listOf("top", "left", "bottom", "right", "insideH", "insideV").forEach { edge ->
+            body.append("<w:$edge w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"808080\"/>")
+        }
+        body.append("</w:tblBorders></w:tblPr>")
+        body.append("<w:tblGrid>")
+        widths.forEach { body.append("<w:gridCol w:w=\"$it\"/>") }
+        body.append("</w:tblGrid>")
+
+        body.append("<w:tr>")
+        listOf("序号", "地址", "照片", "", "").forEachIndexed { i, text ->
+            body.append(
+                cell(
+                    widths[i],
+                    paragraph(text, size = 21, bold = true, align = "center", spaceBefore = 40)
+                )
+            )
+        }
+        body.append("</w:tr>")
+
+        entries.sortedBy { it.time }.forEachIndexed { index, entry ->
+            body.append("<w:tr>")
+            body.append(
+                cell(
+                    widths[0],
+                    paragraph((index + 1).toString(), size = 21, align = "center", spaceBefore = 40)
+                )
+            )
+            body.append(cell(widths[1], paragraph(placeText(entry), size = 21, spaceBefore = 40)))
+
+            body.append("<w:tc><w:tcPr><w:tcW w:w=\"${widths[2]}\" w:type=\"dxa\"/>")
+            body.append("<w:vAlign w:val=\"center\"/></w:tcPr>")
+            val entryParts = mutableListOf<Part>()
+            imageSources(entry).take(2).forEach { file ->
+                prepareImage(file, parts.size + entryParts.size + 1)?.let { entryParts.add(it) }
+            }
+            if (entryParts.isEmpty()) {
+                body.append(paragraph("", size = 18, align = "center"))
+            } else {
+                val start = parts.size
+                parts.addAll(entryParts)
+                body.append(cellImages(start, entryParts))
+            }
+            body.append("</w:tc>")
+
+            body.append(cell(widths[3], paragraph("", size = 21)))
+            body.append(cell(widths[4], paragraph("", size = 21)))
+            body.append("</w:tr>")
+        }
+        body.append("</w:tbl>")
+        body.append(paragraph("", size = 12))
+
+        zip(target, parts, body)
+    }
+
+    private fun cell(width: Int, content: String): String =
+        "<w:tc><w:tcPr><w:tcW w:w=\"$width\" w:type=\"dxa\"/>" +
+            "<w:vAlign w:val=\"center\"/></w:tcPr>$content</w:tc>"
+
+    private fun cellImages(startIndex: Int, parts: List<Part>): String {
+        val runs = StringBuilder()
+        val maxWidthEmu = if (parts.size >= 2) {
+            (0.85 * EMU_PER_INCH).toLong()
+        } else {
+            (1.6 * EMU_PER_INCH).toLong()
+        }
+        parts.forEachIndexed { i, part ->
+            val rid = 100 + startIndex + i + 1
+            val byHeight = (1.6 * EMU_PER_INCH * part.width / part.height).toLong()
+            val cx = minOf(maxWidthEmu, byHeight)
+            val cy = (cx.toDouble() * part.height / part.width).toLong()
+            if (i > 0) runs.append(gapRun())
+            runs.append(drawingRun(rid, cx, cy))
+        }
+        return "<w:p><w:pPr><w:spacing w:before=\"40\" w:after=\"40\"/>" +
+            "<w:jc w:val=\"center\"/></w:pPr>$runs</w:p>"
+    }
+
     private fun zip(target: File, parts: List<Part>, body: StringBuilder) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(target))).use { zip ->
             put(zip, "[Content_Types].xml", contentTypes().toByteArray(Charsets.UTF_8))

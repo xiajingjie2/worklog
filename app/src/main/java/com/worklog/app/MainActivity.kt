@@ -45,7 +45,7 @@ private fun AppRoot() {
     val ctx = LocalContext.current
     val store = remember { EntryStore(ctx) }
     var entries by remember { mutableStateOf<List<Entry>>(emptyList()) }
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(1) }
 
     LaunchedEffect(Unit) {
         entries = withContext(Dispatchers.IO) { store.load() }
@@ -84,6 +84,7 @@ private fun AppRoot() {
                 modifier = Modifier.padding(padding),
                 entries = entries,
                 store = store,
+                onAdd = { tab = 0 },
                 onChanged = { list ->
                     entries = list.sortedByDescending { it.time }
                 }

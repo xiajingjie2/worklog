@@ -16,35 +16,45 @@ import java.time.format.DateTimeFormatter
 object Exporter {
 
     const val MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    const val MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    enum class Format { WORD, EXCEL }
 
     private val filePart = DateTimeFormatter.ofPattern("yyyyMMdd")
     private val titlePart = DateTimeFormatter.ofPattern("yyyy 年 M 月 d 日")
     private const val FOLDER = "工作日志"
 
     /**
-     * 生成 Word，保存到「下载 / 工作日志」目录（卸载重装后文件仍在），
+     * 按模式和格式生成文件，保存到「下载 / 工作日志」目录（卸载重装后仍在），
      * 返回一个可以直接用系统应用打开预览的 Uri。
      */
-    fun exportDocx(
+    fun export(
         ctx: Context,
         day: LocalDate,
         entries: List<Entry>,
-        mode: String
+        mode: String,
+        format: Format
     ): Uri {
         val sorted = entries.sortedBy { it.time }
-        val name = buildString {
-            append(if (mode == AppSettings.MODE_BRIEF) "简报_" else "工作日志_")
-            append(day.format(filePart))
-            append(".docx")
+        val excel = format == Format.EXCEL
+        val prefix = when {
+            excel -> "采集数据表_"
+            mode == AppSettings.MODE_BRIEF -> "简报_"
+            mode == AppSettings.MODE_TABLE -> "采集数据表_"
+            else -> "日志_"
         }
+        val name = prefix + day.format(filePart) + if (excel) ".xlsx" else ".docx"
 
         val dir = File(ctx.cacheDir, "exports").apply { if (!exists()) mkdirs() }
         val temp = File(dir, name)
 
-        if (mode == AppSettings.MODE_BRIEF) {
-            DocxWriter.writeBrief(temp, day.format(titlePart), sorted)
-        } else {
-            DocxWriter.write(
+        when {
+            excel -> XlsxWriter.write(temp, "采集数据表", sorted)
+            mode == AppSettings.MODE_BRIEF ->
+                DocxWriter.writeBrief(temp, day.format(titlePart), sorted)
+            mode == AppSettings.MODE_TABLE ->
+                DocxWriter.writeTable(temp, "采集数据表", sorted)
+            else -> DocxWriter.write(
                 target = temp,
                 title = day.format(titlePart),
                 subtitle = "共 ${sorted.size} 条记录",
@@ -52,17 +62,17 @@ object Exporter {
             )
         }
 
-        return publish(ctx, temp, name)
+        return publish(ctx, temp, name, if (excel) MIME_XLSX else MIME_DOCX)
     }
 
     /** 复制到公共下载目录；任何失败都退回缓存文件（仍可预览和分享）。 */
-    private fun publish(ctx: Context, source: File, name: String): Uri {
+    private fun publish(ctx: Context, source: File, name: String, mime: String): Uri {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val resolver = ctx.contentResolver
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, name)
-                    put(MediaStore.Downloads.MIME_TYPE, MIME_DOCX)
+                    put(MediaStore.Downloads.MIME_TYPE, mime)
                     put(
                         MediaStore.Downloads.RELATIVE_PATH,
                         Environment.DIRECTORY_DOWNLOADS + "/" + FOLDER

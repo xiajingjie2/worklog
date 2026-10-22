@@ -21,9 +21,11 @@ class AppSettings(ctx: Context) {
 
         const val MODE_LOG = "log"
         const val MODE_BRIEF = "brief"
+        const val MODE_TABLE = "table"
 
         fun label(mode: String): String = when (mode) {
             MODE_BRIEF -> "简报"
+            MODE_TABLE -> "表格"
             else -> "日志"
         }
     }

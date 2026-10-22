@@ -89,6 +89,7 @@ fun LogScreen(
     modifier: Modifier = Modifier,
     entries: List<Entry>,
     store: EntryStore,
+    onAdd: () -> Unit,
     onChanged: (List<Entry>) -> Unit
 ) {
     val ctx = LocalContext.current
@@ -108,6 +109,8 @@ fun LogScreen(
     var editTime by remember { mutableStateOf(0L) }
     var editPaths by remember { mutableStateOf<List<String>>(emptyList()) }
     var showCalendar by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var exportedMime by remember { mutableStateOf(Exporter.MIME_DOCX) }
 
     val markedDays = remember(entries) {
         entries.map {
@@ -147,6 +150,31 @@ fun LogScreen(
                     .toLocalDate() == day
             }
             .sortedBy { it.time }
+    }
+
+    fun doExport(format: Exporter.Format) {
+        exporting = true
+        scope.launch {
+            try {
+                val uri = withContext(Dispatchers.IO) {
+                    Exporter.export(ctx, day, dayEntries, mode, format)
+                }
+                exportedMime = if (format == Exporter.Format.EXCEL) {
+                    Exporter.MIME_XLSX
+                } else {
+                    Exporter.MIME_DOCX
+                }
+                exportedUri = uri
+            } catch (t: Throwable) {
+                Toast.makeText(
+                    ctx,
+                    "导出失败：" + (t.message ?: t.javaClass.simpleName),
+                    Toast.LENGTH_LONG
+                ).show()
+            } finally {
+                exporting = false
+            }
+        }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -211,35 +239,23 @@ fun LogScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             OutlinedButton(
+                onClick = onAdd,
+                modifier = Modifier.weight(0.9f)
+            ) {
+                Text("新增")
+            }
+            OutlinedButton(
                 onClick = { showModeDialog = true },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1.3f)
             ) {
                 Text("模式：" + AppSettings.label(mode))
             }
             Button(
-                onClick = {
-                    exporting = true
-                    scope.launch {
-                        try {
-                            val uri = withContext(Dispatchers.IO) {
-                                Exporter.exportDocx(ctx, day, dayEntries, mode)
-                            }
-                            exportedUri = uri
-                        } catch (t: Throwable) {
-                            Toast.makeText(
-                                ctx,
-                                "导出失败：" + (t.message ?: t.javaClass.simpleName),
-                                Toast.LENGTH_LONG
-                            ).show()
-                        } finally {
-                            exporting = false
-                        }
-                    }
-                },
+                onClick = { showExportDialog = true },
                 enabled = dayEntries.isNotEmpty() && !exporting,
-                modifier = Modifier.weight(1.4f)
+                modifier = Modifier.weight(1f)
             ) {
-                Text(if (exporting) "正在生成…" else "导出 Word")
+                Text(if (exporting) "生成中…" else "导出")
             }
         }
     }
@@ -337,6 +353,38 @@ fun LogScreen(
         )
     }
 
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("导出为") },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            showExportDialog = false
+                            doExport(Exporter.Format.WORD)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Word 文档（.docx）")
+                    }
+                    TextButton(
+                        onClick = {
+                            showExportDialog = false
+                            doExport(Exporter.Format.EXCEL)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Excel 表格（.xlsx）")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showExportDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
     val shared = exportedUri
     if (shared != null) {
         AlertDialog(
@@ -346,7 +394,7 @@ fun LogScreen(
             confirmButton = {
                 TextButton(onClick = {
                     exportedUri = null
-                    openDoc(ctx, shared)
+                    openDoc(ctx, shared, exportedMime)
                 }) { Text("预览") }
             },
             dismissButton = {
@@ -366,7 +414,8 @@ fun LogScreen(
                 Column {
                     listOf(
                         AppSettings.MODE_LOG to "日志",
-                        AppSettings.MODE_BRIEF to "简报"
+                        AppSettings.MODE_BRIEF to "简报",
+                        AppSettings.MODE_TABLE to "表格"
                     ).forEach { (value, label) ->
                         Row(
                             modifier = Modifier
@@ -635,9 +684,9 @@ private fun shareDocx(ctx: Context, uri: Uri) {
 }
 
 /** 用系统里能打开 docx 的应用预览 */
-private fun openDoc(ctx: Context, uri: Uri) {
+private fun openDoc(ctx: Context, uri: Uri, mime: String) {
     val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, Exporter.MIME_DOCX)
+        setDataAndType(uri, mime)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     runCatching { ctx.startActivity(intent) }
