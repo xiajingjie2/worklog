@@ -71,6 +71,7 @@ import com.worklog.app.data.AppSettings
 import com.worklog.app.data.Entry
 import com.worklog.app.data.EntryStore
 import com.worklog.app.export.Exporter
+import com.worklog.app.util.ImageOps
 import com.worklog.app.util.Media
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -515,7 +516,7 @@ private fun Thumb(path: String, size: Dp) {
 
     LaunchedEffect(path) {
         bitmap = withContext(Dispatchers.IO) {
-            Media.decodeSampled(path, 256)
+            ImageOps.loadUpright(File(path), 256)
         }?.asImageBitmap()
     }
 

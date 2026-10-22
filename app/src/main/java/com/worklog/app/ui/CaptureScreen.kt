@@ -75,6 +75,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.worklog.app.data.Entry
 import com.worklog.app.data.EntryStore
+import com.worklog.app.util.ImageOps
 import com.worklog.app.util.Locator
 import com.worklog.app.util.Media
 import com.worklog.app.util.Watermark
@@ -174,6 +175,7 @@ fun CaptureScreen(
         ) {
             scope.launch {
                 val updated = withContext(Dispatchers.IO) {
+                    if (ImageOps.rotationOf(file) != 0f) ImageOps.normalizeInPlace(file)
                     val entry = currentEntry.copy(
                         paths = (currentEntry.paths + file.absolutePath).take(2)
                     )
@@ -562,7 +564,9 @@ private suspend fun buildEntry(
 
     // 照片底部压一条「时间 + 位置」水印；视频只记录不烧录
     if (kind == "photo") {
-        Watermark.apply(file, stampText(time, place, lat, lng))
+        val ok = Watermark.apply(file, stampText(time, place, lat, lng))
+        // 万一加水印失败，至少把方向摆正，避免记录里躺着显示
+        if (!ok) ImageOps.normalizeInPlace(file)
     }
 
     val entry = Entry(
@@ -590,7 +594,10 @@ private suspend fun importPicked(ctx: Context, store: EntryStore, uris: List<Uri
                 FileOutputStream(dest).use { out -> ins.copyTo(out) }
             }
         }.getOrNull()
-        if (ok != null && dest.exists() && dest.length() > 0L) dests.add(dest)
+        if (ok != null && dest.exists() && dest.length() > 0L) {
+            if (ImageOps.rotationOf(dest) != 0f) ImageOps.normalizeInPlace(dest)
+            dests.add(dest)
+        }
     }
     if (dests.isEmpty()) return null
 

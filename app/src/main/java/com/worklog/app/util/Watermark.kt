@@ -22,37 +22,11 @@ object Watermark {
 
     fun apply(file: File, text: String): Boolean {
         return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(file.absolutePath, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
-
-            var sample = 1
-            while (bounds.outWidth / sample > MAX_SIDE || bounds.outHeight / sample > MAX_SIDE) {
-                sample *= 2
-            }
-
-            val decoded = BitmapFactory.decodeFile(
-                file.absolutePath,
-                BitmapFactory.Options().apply { inSampleSize = sample }
-            ) ?: return false
-
-            val rotation = readRotation(file)
-            val straight = if (rotation != 0f) {
-                Bitmap.createBitmap(
-                    decoded, 0, 0, decoded.width, decoded.height,
-                    Matrix().apply { postRotate(rotation) }, true
-                )
-            } else {
-                decoded
-            }
-
-            val canvasBitmap = straight.copy(Bitmap.Config.ARGB_8888, true) ?: return false
-            drawWatermark(canvasBitmap, text)
-
-            FileOutputStream(file).use { out ->
-                canvasBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-            }
-            true
+            val bitmap = ImageOps.loadUpright(file, MAX_SIDE) ?: return false
+            drawWatermark(bitmap, text)
+            val ok = ImageOps.writeAtomically(file, bitmap)
+            bitmap.recycle()
+            ok
         } catch (t: Throwable) {
             false
         }

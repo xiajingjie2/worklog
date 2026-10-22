@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
 import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.abs
 
 /**
@@ -77,8 +78,40 @@ object ImageOps {
         }
     }
 
-    private fun cropToAspect(src: Bitmap, aspect: Float): Bitmap {
-        val w = src.width
+    /** 原地把图片摆正（重新编码，去掉 EXIF 旋转标记） */
+    fun normalizeInPlace(file: File): Boolean {
+        return try {
+            val bitmap = loadUpright(file, 2000) ?: return false
+            val ok = writeAtomically(file, bitmap)
+            bitmap.recycle()
+            ok
+        } catch (t: Throwable) {
+            false
+        }
+    }
+
+    /** 先写临时文件再替换，避免压缩失败时把原图写坏 */
+    fun writeAtomically(target: File, bitmap: Bitmap, quality: Int = 90): Boolean {
+        return try {
+            val tmp = File(target.parentFile, target.name + ".tmp")
+            FileOutputStream(tmp).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            }
+            if (tmp.length() <= 0L) {
+                tmp.delete()
+                return false
+            }
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
+            true
+        } catch (t: Throwable) {
+            false
+        }
+    }
+
+    private fun cropToAspect(src: Bitmap, aspect: Float): Bitmap {        val w = src.width
         val h = src.height
         if (w <= 0 || h <= 0) return src
         val current = w.toFloat() / h
