@@ -5,7 +5,7 @@ plugins {
 }
 
 // 版本号只改这里：APK 文件名和版本信息都会跟着变
-val appVersionName = "1.7"
+val appVersionName = "1.8"
 
 android {
     namespace = "com.worklog.app"
@@ -15,11 +15,24 @@ android {
         applicationId = "com.worklog.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
+        versionCode = 18
         versionName = appVersionName
     }
 
+    signingConfigs {
+        // 固定签名：keystore 由 CI 首次构建时生成并提交进仓库，之后永远复用
+        create("stable") {
+            storeFile = file("keystore.jks")
+            storePassword = "niuniu2026"
+            keyAlias = "niuniu"
+            keyPassword = "niuniu2026"
+        }
+    }
+
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("stable")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
