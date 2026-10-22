@@ -260,7 +260,7 @@ object DocxWriter {
             val entryParts = mutableListOf<Part>()
             val tableFiles = imageSources(entry).take(2)
             tableFiles.forEach { file ->
-                prepareImage(file, parts.size + entryParts.size + 1, 4f / 3f, crop = false)
+                prepareImage(file, parts.size + entryParts.size + 1)
                     ?.let { entryParts.add(it) }
             }
             if (entryParts.isEmpty()) {
@@ -297,7 +297,8 @@ object DocxWriter {
         }
         parts.forEachIndexed { i, part ->
             val rid = 100 + startIndex + i + 1
-            val cy = (maxWidthEmu.toDouble() * part.height / part.width).toLong()
+            // 表格里统一横向 4:3；竖向照片会被拉伸填满
+            val cy = (maxWidthEmu * 3) / 4
             if (i > 0) runs.append(gapRun(1))
             runs.append(drawingRun(rid, maxWidthEmu, cy))
         }
