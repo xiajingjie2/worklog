@@ -91,6 +91,9 @@ object XlsxWriter {
             append("</cols>")
             append("<sheetData>").append(sheet).append("</sheetData>")
             append("<mergeCells count=\"1\"><mergeCell ref=\"A1:E1\"/></mergeCells>")
+            // A4 横向打印；内容多就让表格继续向右/向下延伸，不缩放到纸张
+            append("<pageMargins left=\"0.4\" right=\"0.4\" top=\"0.5\" bottom=\"0.5\" header=\"0.3\" footer=\"0.3\"/>")
+            append("<pageSetup paperSize=\"9\" orientation=\"landscape\" scale=\"100\"/>")
             append("<drawing r:id=\"rId1\"/>")
             append("</worksheet>")
         }
@@ -113,7 +116,7 @@ object XlsxWriter {
 
     private fun prepareImage(file: File, index: Int): Img? {
         return try {
-            val bitmap = ImageOps.loadUpright(file, MAX_SIDE, 4f / 3f, crop = false) ?: return null
+            val bitmap = ImageOps.loadUpright(file, MAX_SIDE) ?: return null
             val buffer = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 82, buffer)
             bitmap.recycle()

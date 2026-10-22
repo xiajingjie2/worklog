@@ -5,7 +5,7 @@ plugins {
 }
 
 // 版本号只改这里：APK 文件名和版本信息都会跟着变
-val appVersionName = "1.13"
+val appVersionName = "1.14"
 
 android {
     namespace = "com.worklog.app"
@@ -15,7 +15,7 @@ android {
         applicationId = "com.worklog.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 23
+        versionCode = 24
         versionName = appVersionName
     }
 
