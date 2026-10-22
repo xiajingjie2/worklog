@@ -4,6 +4,8 @@ package com.worklog.app.util
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
 import android.media.ExifInterface
 import java.io.File
@@ -44,9 +46,15 @@ object ImageOps {
     }
 
     /**
-     * 解码并摆正图片；targetAspect 非空时居中裁剪成该比例（用于两张图统一尺寸）。
+     * 解码并摆正图片；targetAspect 非空时调整为该比例：
+     * crop=true 居中裁剪，crop=false 用白边补齐（不裁掉内容）。
      */
-    fun loadUpright(file: File, maxSide: Int, targetAspect: Float? = null): Bitmap? {
+    fun loadUpright(
+        file: File,
+        maxSide: Int,
+        targetAspect: Float? = null,
+        crop: Boolean = true
+    ): Bitmap? {
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.absolutePath, bounds)
@@ -72,7 +80,9 @@ object ImageOps {
                 raw
             }
 
-            if (targetAspect == null) upright else cropToAspect(upright, targetAspect)
+            if (targetAspect == null) upright
+            else if (crop) cropToAspect(upright, targetAspect)
+            else padToAspect(upright, targetAspect)
         } catch (t: Throwable) {
             null
         }
@@ -109,6 +119,31 @@ object ImageOps {
         } catch (t: Throwable) {
             false
         }
+    }
+
+    /** 用白边把图片补成目标比例，内容完整保留 */
+    private fun padToAspect(src: Bitmap, aspect: Float): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w <= 0 || h <= 0) return src
+        val current = w.toFloat() / h
+        if (abs(current - aspect) < 0.01f) return src
+
+        val targetW: Int
+        val targetH: Int
+        if (current > aspect) {
+            targetW = w
+            targetH = (w / aspect).toInt().coerceAtLeast(h)
+        } else {
+            targetH = h
+            targetW = (h * aspect).toInt().coerceAtLeast(w)
+        }
+
+        val out = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(Color.WHITE)
+        canvas.drawBitmap(src, (targetW - w) / 2f, (targetH - h) / 2f, null)
+        return out
     }
 
     private fun cropToAspect(src: Bitmap, aspect: Float): Bitmap {        val w = src.width

@@ -219,12 +219,11 @@ object DocxWriter {
         body.append(paragraph("", size = 14))
 
         val maxPhotos = entries.maxOfOrNull { imageSources(it).take(2).size } ?: 1
-        val widths = if (maxPhotos >= 2) {
-            listOf(700, 2100, 3000, 2100, 600)
-        } else {
-            listOf(700, 2800, 1600, 2800, 600)
-        }
-        body.append("<w:tbl><w:tblPr><w:tblW w:w=\"8502\" w:type=\"dxa\"/><w:jc w:val=\"center\"/>")
+        // 地址/详情列宽度固定；照片列需要更宽时，整张表向右扩，不挤占其他列
+        val photoCol = if (maxPhotos >= 2) 3200 else 1800
+        val widths = listOf(700, 2800, photoCol, 2800, 600)
+        val tableWidth = widths.sum()
+        body.append("<w:tbl><w:tblPr><w:tblW w:w=\"$tableWidth\" w:type=\"dxa\"/><w:jc w:val=\"center\"/>")
         body.append("<w:tblBorders>")
         listOf("top", "left", "bottom", "right", "insideH", "insideV").forEach { edge ->
             body.append("<w:$edge w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"808080\"/>")
@@ -261,7 +260,7 @@ object DocxWriter {
             val entryParts = mutableListOf<Part>()
             val tableFiles = imageSources(entry).take(2)
             tableFiles.forEach { file ->
-                prepareImage(file, parts.size + entryParts.size + 1, 4f / 3f)
+                prepareImage(file, parts.size + entryParts.size + 1, 4f / 3f, crop = false)
                     ?.let { entryParts.add(it) }
             }
             if (entryParts.isEmpty()) {
@@ -521,9 +520,15 @@ object DocxWriter {
 
     // ---------------------------------------------------------------- 图片
 
-    private fun prepareImage(file: File, index: Int, targetAspect: Float? = null): Part? {
+    private fun prepareImage(
+        file: File,
+        index: Int,
+        targetAspect: Float? = null,
+        crop: Boolean = true
+    ): Part? {
         return try {
-            val bitmap = ImageOps.loadUpright(file, MAX_IMAGE_WIDTH, targetAspect) ?: return null
+            val bitmap = ImageOps.loadUpright(file, MAX_IMAGE_WIDTH, targetAspect, crop)
+                ?: return null
             val buffer = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 82, buffer)
             val part = Part(

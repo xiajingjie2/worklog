@@ -51,7 +51,14 @@ object XlsxWriter {
         entries.sortedBy { it.time }.forEachIndexed { index, entry ->
             val row = 3 + index
             val (addr, detail) = splitRecord(entry)
-            sheet.append("<row r=\"$row\" ht=\"110\" customHeight=\"1\">")
+            val files = imageSources(entry)
+            val count = files.size
+            val gap = 128_000L   // 约一个中文字符宽
+            val imgW = if (count >= 2) (photoColEmu - gap) / 2 else photoColEmu
+            val imgH = (imgW * 3) / 4          // 4:3
+            val rowH = ((imgH / 12700) + 16).toInt().coerceAtLeast(96)
+
+            sheet.append("<row r=\"$row\" ht=\"$rowH\" customHeight=\"1\">")
             sheet.append(textCell("A$row", (index + 1).toString(), 1))
             sheet.append(textCell("B$row", addr, 1))
             sheet.append("<c r=\"C$row\" s=\"1\"/>")
@@ -59,17 +66,14 @@ object XlsxWriter {
             sheet.append(textCell("E$row", "", 1))
             sheet.append("</row>")
 
-            val files = imageSources(entry)
-            val count = files.size
-            val gap = 128_000L   // 约一个中文字符宽
             files.forEachIndexed { i, file ->
                 val img = prepareImage(file, images.size + 1) ?: return@forEachIndexed
                 images.add(img)
                 val rel = "rId${100 + images.size}"
-                val fromOff = if (count >= 2 && i > 0) photoColEmu / 2 + gap / 2 else 0L
-                val toOff = if (count >= 2 && i == 0) photoColEmu / 2 - gap / 2 else photoColEmu
+                val fromOff = if (count >= 2 && i > 0) imgW + gap else 0L
+                val toOff = fromOff + imgW
 
-                drawingAnchors.append(anchor(row - 1, fromOff, toOff, images.size))
+                drawingAnchors.append(anchor(row - 1, fromOff, toOff, images.size, imgH))
                 drawingRelsAdd(rel, img.name)
             }
         }
@@ -109,7 +113,7 @@ object XlsxWriter {
 
     private fun prepareImage(file: File, index: Int): Img? {
         return try {
-            val bitmap = ImageOps.loadUpright(file, MAX_SIDE, 4f / 3f) ?: return null
+            val bitmap = ImageOps.loadUpright(file, MAX_SIDE, 4f / 3f, crop = false) ?: return null
             val buffer = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 82, buffer)
             bitmap.recycle()
@@ -157,12 +161,12 @@ object XlsxWriter {
         return head to tail
     }
 
-    private fun anchor(row: Int, fromOff: Long, toOff: Long, id: Int): String = buildString {
+    private fun anchor(row: Int, fromOff: Long, toOff: Long, id: Int, heightEmu: Long): String = buildString {
         append("<xdr:twoCellAnchor editAs=\"oneCell\">")
         append("<xdr:from><xdr:col>2</xdr:col><xdr:colOff>$fromOff</xdr:colOff>")
         append("<xdr:row>$row</xdr:row><xdr:rowOff>47625</xdr:rowOff></xdr:from>")
         append("<xdr:to><xdr:col>2</xdr:col><xdr:colOff>$toOff</xdr:colOff>")
-        append("<xdr:row>$row</xdr:row><xdr:rowOff>1100000</xdr:rowOff></xdr:to>")
+        append("<xdr:row>$row</xdr:row><xdr:rowOff>$heightEmu</xdr:rowOff></xdr:to>")
         append("<xdr:pic>")
         append("<xdr:nvPicPr><xdr:cNvPr id=\"$id\" name=\"Picture $id\"/><xdr:cNvPicPr/></xdr:nvPicPr>")
         append("<xdr:blipFill><a:blip xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" r:embed=\"rId${100 + id}\"/>")
